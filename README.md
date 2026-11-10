@@ -1,0 +1,1 @@
+# sokuho_result.com
