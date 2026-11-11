@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 48" role="img" aria-labelledby="title">
+  <title id="title">SOKUHO</title>
+  <rect x="1" y="1" width="46" height="46" rx="8" fill="#d9ef67"/>
+  <path d="M9 13h25c5 0 5 7 0 7H17c-6 0-6 8 0 8h16c6 0 6 7 0 7H9" fill="none" stroke="#102b32" stroke-linecap="square" stroke-width="3"/>
+  <path d="M40 9v30" fill="none" stroke="#174b43" stroke-width="2"/>
+  <text x="58" y="33" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="800">SOKUHO</text>
+</svg>

@@ -1,0 +1,707 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102b32">
+  <title>速報記録 | SOKUHO</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172a2c;
+      --muted: #647476;
+      --line: #d8e0dc;
+      --paper: #ffffff;
+      --canvas: #f1f4ef;
+      --forest: #174b43;
+      --forest-dark: #102b32;
+      --lime: #d9ef67;
+      --coral: #c8553d;
+      --blue: #dcecf2;
+      font-family: "Avenir Next", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+      font-synthesis: none;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding-bottom: calc(86px + env(safe-area-inset-bottom)); background: var(--canvas); color: var(--ink); }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .masthead { background: var(--forest-dark); color: white; border-bottom: 4px solid var(--lime); }
+    .masthead-inner { width: min(1120px, calc(100% - 36px)); margin: auto; min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: flex; align-items: center; gap: 12px; font-size: 15px; font-weight: 800; letter-spacing: 0; }
+    .sokuho-logo { display: block; width: 176px; height: auto; }
+    .masthead-note { color: #c5d5cf; font-size: 12px; }
+    main { width: min(1120px, calc(100% - 36px)); margin: 30px auto 60px; }
+    .intro { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+    .eyebrow { color: var(--forest); font-size: 11px; font-weight: 800; letter-spacing: 0; text-transform: uppercase; }
+    h1 { margin: 6px 0 0; font-size: clamp(24px, 5vw, 36px); line-height: 1.2; }
+    .intro-copy { max-width: 380px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .panel { border: 1px solid var(--line); background: var(--paper); }
+    .create-layout { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 760px; }
+    .create-form { padding: clamp(22px, 5vw, 42px); }
+    .section-title { margin: 0 0 21px; font-size: 18px; }
+    .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .field { display: grid; gap: 7px; margin-bottom: 17px; }
+    .field label { color: #46595a; font-size: 12px; font-weight: 700; }
+    .field input, .field textarea, .field select { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #cbd6d1; border-radius: 2px; background: white; color: var(--ink); outline: none; }
+    .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--forest); box-shadow: 0 0 0 2px rgba(23,75,67,.12); }
+    .primary, .secondary, .danger { min-height: 42px; border: 0; padding: 0 17px; font-size: 13px; font-weight: 800; }
+    .primary { background: var(--forest); color: white; }.primary:hover { background: #0e3932; }
+    .secondary { border: 1px solid #b9c9c1; background: white; color: var(--forest); }
+    .danger { background: #f6e5df; color: #873e30; }
+    .wide { width: 100%; }
+    .error { min-height: 20px; margin: 9px 0 0; color: #a63d2d; font-size: 12px; }
+    .race-head { padding: 20px 24px; background: var(--paper); border: 1px solid var(--line); border-top: 4px solid var(--forest); }
+    .race-heading { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
+    .race-heading h1 { font-size: clamp(23px, 4vw, 31px); }
+    .race-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 9px; color: var(--muted); font-size: 12px; }
+    .viewer-badge { display: inline-block; padding: 3px 8px; border: 1px solid #b9c9c1; color: var(--forest); font-size: 10px; font-weight: 800; }
+    .head-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .stats { display: flex; gap: 26px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--line); }
+    .stat { display: flex; align-items: baseline; gap: 7px; color: var(--muted); font-size: 11px; }
+    .stat strong { color: var(--ink); font-size: 18px; font-variant-numeric: tabular-nums; }
+    .toolbar { display: flex; align-items: end; justify-content: space-between; gap: 14px; margin: 25px 0 10px; }
+    .toolbar-left { display: flex; align-items: end; gap: 12px; }
+    .toolbar .field { margin: 0; min-width: 210px; }
+    .toolbar .field label { font-size: 11px; }
+    .toolbar select { min-height: 38px; padding: 7px 10px; }
+    .live-state { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #82908a; }
+    .live-state.connected .live-dot { background: #3a9d68; box-shadow: 0 0 0 3px #dcefe1; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); background: white; }
+    table { width: 100%; border-collapse: collapse; min-width: 730px; font-size: 13px; }
+    th { height: 38px; padding: 8px 12px; background: #e8eeea; color: #495c59; text-align: left; font-size: 11px; font-weight: 800; white-space: nowrap; }
+    td { height: 54px; padding: 8px 12px; border-top: 1px solid #e6ebe8; }
+    tbody tr:hover { background: #f8faf8; }
+    .lane { width: 65px; text-align: center; font-variant-numeric: tabular-nums; }
+    .lane-number { display: inline-grid; width: 26px; height: 26px; place-items: center; background: var(--blue); color: #23536a; font-weight: 800; }
+    .athlete-name { font-weight: 800; }.team { color: var(--muted); font-size: 12px; }
+    .result-time { font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 800; }
+    .place { display: inline-block; min-width: 32px; color: var(--forest); font-size: 11px; font-weight: 800; }
+    .status { color: var(--muted); font-size: 11px; }.status.finished { color: var(--forest); font-weight: 700; }
+    .record-button { min-height: 34px; padding: 0 12px; border: 1px solid var(--forest); background: white; color: var(--forest); font-size: 11px; font-weight: 800; }
+    .record-button:disabled { border-color: #d1d9d4; color: #a0aaa4; cursor: default; }
+    .start-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px 18px; border: 1px solid var(--line); border-top: 0; background: #f9fbf8; }
+    .start-copy strong { display: block; font-size: 13px; }.start-copy span { color: var(--muted); font-size: 11px; }
+    .start-button { min-width: 160px; min-height: 48px; background: var(--coral); color: white; font-size: 14px; }
+    .start-button:disabled { background: #a9b5b0; cursor: default; }
+    .empty { padding: 36px 20px; border: 1px solid var(--line); background: white; text-align: center; color: var(--muted); font-size: 13px; }
+    .empty strong { display: block; margin-bottom: 7px; color: var(--ink); font-size: 15px; }
+    .footnote { display: flex; justify-content: space-between; gap: 20px; margin-top: 12px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+    dialog { width: min(560px, calc(100% - 28px)); max-height: min(90vh, 760px); padding: 0; border: 1px solid var(--line); background: white; color: var(--ink); }
+    dialog::backdrop { background: rgba(12, 31, 32, .55); }
+    .dialog-head, .dialog-body, .dialog-actions { padding: 18px 22px; }
+    .dialog-head { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .dialog-head h2 { margin: 0; font-size: 18px; }.dialog-body { max-height: 65vh; overflow: auto; }
+    .dialog-actions { display: flex; justify-content: end; gap: 9px; border-top: 1px solid var(--line); }
+    textarea { min-height: 145px; resize: vertical; line-height: 1.7; }
+    .hint { margin: -7px 0 14px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+    .auth-wrap { width: min(520px, 100%); margin: 34px auto 0; }
+    .auth-panel { border-top: 4px solid var(--forest); }
+    .auth-tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; border-bottom: 1px solid var(--line); }
+    .auth-tabs button { min-height: 48px; border: 0; border-right: 1px solid var(--line); background: #f5f7f4; color: var(--muted); font-size: 12px; font-weight: 800; }
+    .auth-tabs button:last-child { border-right: 0; }
+    .auth-tabs button[aria-selected="true"] { background: white; color: var(--forest); box-shadow: inset 0 -3px var(--forest); }
+    .auth-form { padding: clamp(22px, 5vw, 36px); }
+    .auth-form h2 { margin: 0 0 7px; font-size: 21px; }
+    .auth-description, .viewer-note { color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .auth-description { margin: 0 0 23px; }
+    .viewer-note { margin: 16px 0 0; text-align: center; }
+    .dashboard-heading { display: flex; justify-content: space-between; align-items: end; gap: 16px; }
+    .dashboard-heading h1 { font-size: 28px; }
+    .dashboard-heading .intro-copy { margin: 8px 0 0; }
+    .dashboard-list { margin-top: 28px; }
+    .dashboard-list h2, .admin-table h2 { font-size: 17px; }
+    .admin-stats { display: flex; gap: 28px; margin: 20px 0; padding: 18px; border-block: 1px solid var(--line); }
+    .admin-table { margin-top: 28px; }
+    .group-panel { margin: 18px 0; padding: 18px 20px; border: 1px solid var(--line); background: white; }
+    .group-panel-head { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
+    .group-panel h2 { margin: 0; font-size: 15px; }
+    .group-owner, .group-member-detail { color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .group-invite-form { display: flex; align-items: end; gap: 10px; margin-top: 14px; }
+    .group-invite-form .field { flex: 1; margin: 0; }
+    .group-members { display: grid; gap: 0; margin: 14px 0 0; padding: 0; list-style: none; }
+    .group-members li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+    .group-member-name { font-size: 13px; font-weight: 800; }
+    .group-role { display: inline-block; margin-left: 6px; color: var(--forest); font-size: 10px; font-weight: 700; }
+    .group-panel .error { margin-top: 8px; }
+    .sponsor-bar { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; min-height: 68px; padding-bottom: env(safe-area-inset-bottom); border-top: 1px solid var(--line); background: rgba(255,255,255,.97); box-shadow: 0 -4px 18px rgba(16,43,50,.08); }
+    .sponsor-bar-inner { display: flex; align-items: center; justify-content: center; gap: 24px; width: min(1120px, calc(100% - 36px)); min-height: 68px; margin: auto; }
+    .sponsor-label { color: var(--muted); font-size: 10px; font-weight: 800; }
+    .sponsor-list { display: flex; align-items: center; gap: 26px; }
+    .sponsor-link { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; color: #202020; text-decoration: none; }
+    .sponsor-link img { display: block; object-fit: contain; }
+    .sponsor-newbalance img, .sponsor-github img { width: 26px; height: 26px; }
+    .sponsor-cramer img { width: 108px; height: 27px; }
+    .sponsor-name { font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .mobile-only { display: none; }
+    @keyframes page-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    #app.page-enter { animation: page-enter 220ms ease-out both; }
+    @media (max-width: 700px) {
+      .masthead-inner, main { width: min(100% - 24px, 1120px); }
+      .masthead-inner { min-height: 58px; gap: 8px; }
+      .brand { gap: 8px; font-size: 13px; }
+      .sokuho-logo { width: 142px; }
+      .masthead-note { max-width: 78px; font-size: 10px; text-align: right; }
+      main { margin-top: 20px; }
+      .intro { display: block; }.intro-copy { margin-top: 10px; }
+      .create-layout { grid-template-columns: minmax(0, 1fr); }
+      .race-head { padding: 17px; }.race-heading { display: block; }.head-actions { margin-top: 15px; }.stats { justify-content: space-between; gap: 8px; }
+      .toolbar { align-items: stretch; flex-direction: column; }.toolbar-left { align-items: stretch; }.toolbar .field { min-width: 0; flex: 1; }.toolbar .primary { flex-shrink: 0; padding: 0 11px; }
+      .start-bar { align-items: stretch; flex-direction: column; }.start-button { width: 100%; }
+      .dashboard-heading { align-items: start; flex-direction: column; }.dashboard-heading .intro-copy { margin-top: 4px; }
+      .admin-stats { justify-content: space-between; gap: 10px; padding-inline: 8px; }
+      .group-panel { padding: 15px; }
+      .group-panel-head { flex-direction: column; }
+      .group-invite-form { align-items: stretch; flex-direction: column; }
+      .group-invite-form .primary { width: 100%; }
+      .table-wrap { overflow: visible; border: 0; background: transparent; }
+      table { min-width: 0; }
+      thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+      tbody { display: grid; gap: 9px; }
+      tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 7px 10px; border: 1px solid var(--line); background: white; }
+      tbody td { display: grid; align-content: center; gap: 3px; min-width: 0; height: auto; min-height: 38px; padding: 7px 4px; border-top: 1px solid #e6ebe8; overflow-wrap: anywhere; }
+      tbody td::before { content: attr(data-label); color: var(--muted); font-size: 10px; font-weight: 700; }
+      tbody td:first-child { border-top: 0; }
+      tbody td .danger, tbody td button { justify-self: start; }
+      .lane { width: auto; text-align: left; }
+      .footnote { display: block; }.footnote span { display: block; margin-top: 5px; }
+      body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+      .sponsor-bar, .sponsor-bar-inner { min-height: 64px; }
+      .sponsor-bar-inner { justify-content: space-between; gap: 8px; width: calc(100% - 20px); }
+      .sponsor-label { font-size: 9px; }
+      .sponsor-list { justify-content: space-between; flex: 1; gap: 8px; }
+      .sponsor-link { gap: 4px; min-height: 36px; }
+      .sponsor-newbalance img, .sponsor-github img { width: 21px; height: 21px; }
+      .sponsor-cramer img { width: 74px; height: 20px; }
+      .sponsor-name { font-size: 10px; }
+      .mobile-only { display: inline; }
+    }
+    @media (prefers-reduced-motion: reduce) { #app.page-enter { animation-duration: 1ms; } }
+  </style>
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead-inner">
+      <a class="brand" href="/" aria-label="SOKUHO ホーム"><img class="sokuho-logo" src="/sokuho-logo.svg" alt="SOKUHO"></a>
+      <span class="masthead-note">陸上競技　速報記録</span>
+    </div>
+  </header>
+  <main id="app" aria-live="polite"></main>
+  <footer class="sponsor-bar" aria-label="スポンサー">
+    <div class="sponsor-bar-inner">
+      <span class="sponsor-label">協賛</span>
+      <div class="sponsor-list">
+        <a class="sponsor-link sponsor-newbalance" href="https://www.newbalance.com/" target="_blank" rel="noopener noreferrer" aria-label="New Balance">
+          <img src="/newbalance.svg" alt=""><span class="sponsor-name">New Balance</span>
+        </a>
+        <a class="sponsor-link sponsor-cramer" href="https://www.cramer.co.jp/" target="_blank" rel="noopener noreferrer" aria-label="Cramer Japan">
+          <img src="/cramer-japan.gif" alt="Cramer Japan">
+        </a>
+        <a class="sponsor-link sponsor-github" href="https://github.com/" target="_blank" rel="noopener noreferrer" aria-label="GitHub">
+          <img src="/github-mark.png" alt=""><span class="sponsor-name">GitHub</span>
+        </a>
+      </div>
+    </div>
+  </footer>
+  <dialog id="event-dialog">
+    <form id="event-form">
+      <div class="dialog-head"><h2>競技を追加</h2><button class="secondary" type="button" data-close>閉じる</button></div>
+      <div class="dialog-body">
+        <div class="field"><label for="event-name">競技名</label><input id="event-name" name="name" placeholder="男子 100m" required maxlength="60"></div>
+        <div class="field"><label for="event-round">ラウンド・組</label><input id="event-round" name="round" placeholder="予選 1組" maxlength="30"></div>
+        <div class="field"><label for="athletes">選手・所属</label><textarea id="athletes" name="athletes" placeholder="山田 太郎 | 青葉中\n佐藤 花子 | 港中\n鈴木 一郎" required></textarea></div>
+        <p class="hint">1行に1名。所属を付ける場合は「選手名 | 所属」で入力してください。入力順にレーンを割り当てます。</p>
+        <p class="error" id="event-error" role="alert"></p>
+      </div>
+      <div class="dialog-actions"><button class="primary" type="submit">競技を登録</button></div>
+    </form>
+  </dialog>
+  <script>
+    const app = document.querySelector('#app');
+    const eventDialog = document.querySelector('#event-dialog');
+    let race = null;
+    let selectedEventId = null;
+    let clockOffset = 0;
+    let source = null;
+    let routeToken = 0;
+    let currentUser = null;
+    let raceAccess = { canManage: false, isOwner: false, isCollaborator: false };
+    let currentGroup = null;
+
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[character]);
+
+    async function request(url, options = {}) {
+      const response = await fetch(url, {
+        ...options,
+        headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '通信に失敗しました');
+      return result;
+    }
+
+    async function syncClock() {
+      const samples = [];
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const before = Date.now();
+        const result = await request('/api/time');
+        const after = Date.now();
+        samples.push({ offset: result.serverTime - (before + after) / 2, delay: after - before });
+      }
+      clockOffset = samples.sort((left, right) => left.delay - right.delay)[0].offset;
+    }
+
+    function currentEvent() {
+      return race?.events.find((item) => item.id === selectedEventId) || race?.events[0] || null;
+    }
+
+    function formatTime(milliseconds) {
+      if (!Number.isFinite(milliseconds) || milliseconds < 0) return '--.--';
+      const centiseconds = Math.floor(milliseconds / 10);
+      const seconds = Math.floor(centiseconds / 100);
+      return `${seconds}.${String(centiseconds % 100).padStart(2, '0')}`;
+    }
+
+    function resultFor(event, athlete) {
+      return athlete.finishedAt && event.startedAt ? athlete.finishedAt - event.startedAt : null;
+    }
+
+    function renderCreate(animate = false) {
+      const today = new Date().toISOString().slice(0, 10);
+      app.innerHTML = `
+        <section class="intro"><div><div class="eyebrow">OPEN MEET DESK</div><h1>大会速報をつくる</h1></div><p class="intro-copy">大会ページを作成すると、共有URLが発行されます。見る人も記録をつける人も、アカウント登録は必要ありません。</p></section>
+        <section class="panel create-layout">
+          <form class="create-form" id="create-form">
+            <h2 class="section-title">大会情報</h2>
+            <div class="field"><label for="race-title">大会名</label><input id="race-title" name="title" placeholder="例：春季陸上競技記録会" required maxlength="80"></div>
+            <div class="field-grid">
+              <div class="field"><label for="race-date">開催日</label><input id="race-date" name="date" type="date" value="${today}"></div>
+              <div class="field"><label for="race-venue">会場</label><input id="race-venue" name="venue" placeholder="会場名" maxlength="80"></div>
+            </div>
+            <p class="error" id="create-error" role="alert"></p>
+            <button class="primary wide" type="submit">大会ページを作成</button>
+          </form>
+        </section>`;
+      animatePage(animate);
+      document.querySelector('#create-form').addEventListener('submit', createRace);
+    }
+
+    function animatePage(enabled) {
+      app.classList.remove('page-enter');
+      if (enabled) requestAnimationFrame(() => app.classList.add('page-enter'));
+    }
+
+    function renderAuth(mode = 'login', animate = false, message = '') {
+      const registering = mode === 'register';
+      const adminMode = mode === 'admin';
+      app.innerHTML = `
+        <section class="auth-wrap">
+          <div class="intro"><div><div class="eyebrow">OPEN MEET DESK</div><h1>運営者ページ</h1></div></div>
+          <section class="panel auth-panel">
+            <div class="auth-tabs" role="tablist" aria-label="ログイン種別">
+              <button type="button" data-auth-mode="login" role="tab" aria-selected="${mode === 'login'}">運営者ログイン</button>
+              <button type="button" data-auth-mode="register" role="tab" aria-selected="${registering}">運営者登録</button>
+              <button type="button" data-auth-mode="admin" role="tab" aria-selected="${adminMode}">管理者</button>
+            </div>
+            <form class="auth-form" id="auth-form" data-mode="${mode}">
+              <h2>${registering ? '運営者アカウントを作成' : adminMode ? '管理者ログイン' : '運営者ログイン'}</h2>
+              <p class="auth-description">${registering ? '登録後、大会の作成・記録操作ができます。' : adminMode ? '開発用の管理者アカウントでログインしてください。管理者登録は公開していません。' : '大会を作成・運営する方はこちらからログインしてください。'}</p>
+              ${registering ? '<div class="field"><label for="auth-name">お名前</label><input id="auth-name" name="name" autocomplete="name" required maxlength="60"></div>' : ''}
+              <div class="field"><label for="auth-email">メールアドレス</label><input id="auth-email" name="email" type="email" autocomplete="username" required maxlength="254"></div>
+              <div class="field"><label for="auth-password">パスワード${registering ? '（12文字以上）' : ''}</label><input id="auth-password" name="password" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" ${registering ? 'minlength="12"' : ''} required></div>
+              <p class="error" id="auth-error" role="alert">${escapeHtml(message)}</p>
+              <button class="primary wide" type="submit">${registering ? '運営者登録' : 'ログイン'}</button>
+            </form>
+          </section>
+          <p class="viewer-note">速報を閲覧するだけの方は、アカウント登録は不要です。大会運営者から受け取った速報URLを開いてください。</p>
+        </section>`;
+      animatePage(animate);
+      document.querySelectorAll('[data-auth-mode]').forEach((button) => {
+        button.addEventListener('click', () => renderAuth(button.dataset.authMode, true));
+      });
+      document.querySelector('#auth-form').addEventListener('submit', submitAuth);
+    }
+
+    function renderOrganizer(races, animate = false) {
+      app.innerHTML = `
+        <section class="intro dashboard-heading"><div><div class="eyebrow">運営者ページ</div><h1>${escapeHtml(currentUser.name)} さん</h1><p class="intro-copy">大会の作成と速報記録を管理します。</p></div><button class="secondary" id="logout-button">ログアウト</button></section>
+        <section class="panel create-layout">
+          <form class="create-form" id="create-form">
+            <h2 class="section-title">大会を作成</h2>
+            <div class="field"><label for="race-title">大会名</label><input id="race-title" name="title" placeholder="例：春季陸上競技記録会" required maxlength="80"></div>
+            <div class="field-grid">
+              <div class="field"><label for="race-date">開催日</label><input id="race-date" name="date" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
+              <div class="field"><label for="race-venue">会場</label><input id="race-venue" name="venue" placeholder="会場名" maxlength="80"></div>
+            </div>
+            <p class="error" id="create-error" role="alert"></p>
+            <button class="primary wide" type="submit">大会ページを作成</button>
+          </form>
+        </section>
+        <section class="dashboard-list"><h2>担当する大会</h2>${races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>開催日</th><th>会場</th><th>役割</th><th>主催者</th><th>共同運営者数</th><th>競技数</th><th></th></tr></thead><tbody>${races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="開催日">${escapeHtml(item.date || '—')}</td><td data-label="会場">${escapeHtml(item.venue || '—')}</td><td data-label="役割">${item.relation === 'owner' ? '主催者' : '共同運営者'}</td><td data-label="主催者">${escapeHtml(item.owner?.name || '不明')}</td><td data-label="共同運営者数">${item.groupMemberCount}</td><td data-label="競技数">${item.events.length}</td><td data-label="操作"><a href="/r/${encodeURIComponent(item.id)}" data-race-id="${item.id}">大会を開く</a></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">担当する大会はまだありません。</div>'}</section>`;
+      animatePage(animate);
+      document.querySelector('#create-form').addEventListener('submit', createRace);
+      document.querySelector('#logout-button').addEventListener('click', logout);
+      document.querySelectorAll('[data-race-id]').forEach((link) => {
+        link.addEventListener('click', (clickEvent) => {
+          if (clickEvent.metaKey || clickEvent.ctrlKey || clickEvent.shiftKey || clickEvent.altKey) return;
+          clickEvent.preventDefault();
+          history.pushState({}, '', link.href);
+          loadRace(link.dataset.raceId, true);
+        });
+      });
+    }
+
+    function renderAdmin(summary, animate = false) {
+      app.innerHTML = `
+        <section class="intro dashboard-heading"><div><div class="eyebrow">DEVELOPER CONSOLE</div><h1>管理者ダッシュボード</h1><p class="intro-copy">ログイン中: ${escapeHtml(currentUser.email)}</p></div><button class="secondary" id="logout-button">ログアウト</button></section>
+        <div class="admin-stats"><div class="stat"><strong>${summary.organizerCount}</strong>運営者</div><div class="stat"><strong>${summary.raceCount}</strong>大会</div></div>
+        <section class="admin-table"><h2>運営者アカウント</h2>${summary.organizers.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>主催大会</th><th>共同参加</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.organizers.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}</td><td data-label="主催大会">${item.ownedRaceCount}</td><td data-label="共同参加">${item.collaborationCount}</td><td data-label="登録日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="操作"><button class="danger" data-delete-organizer="${item.id}" data-organizer-name="${escapeHtml(item.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">運営者はまだ登録されていません。</div>'}</section>
+        <section class="admin-table"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="大会"><a href="/r/${encodeURIComponent(item.id)}">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>`;
+      animatePage(animate);
+      document.querySelector('#logout-button').addEventListener('click', logout);
+      document.querySelectorAll('[data-delete-organizer]').forEach((button) => {
+        button.addEventListener('click', () => deleteAdminItem('organizers', button.dataset.deleteOrganizer, button.dataset.organizerName));
+      });
+      document.querySelectorAll('[data-delete-race]').forEach((button) => {
+        button.addEventListener('click', () => deleteAdminItem('races', button.dataset.deleteRace, button.dataset.raceTitle));
+      });
+    }
+
+    async function deleteAdminItem(type, id, label) {
+      const message = type === 'organizers'
+        ? `運営者「${label}」のアカウントを削除します。所有する大会と記録もすべて削除されます。この操作は取り消せません。よろしいですか？`
+        : `大会「${label}」と登録済みの競技・記録を削除します。この操作は取り消せません。よろしいですか？`;
+      if (!window.confirm(message)) return;
+      try {
+        await request(`/api/admin/${type}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        const summary = await request('/api/admin/summary');
+        renderAdmin(summary, true);
+      } catch (failure) {
+        window.alert(failure.message);
+      }
+    }
+
+    async function submitAuth(event) {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const mode = event.currentTarget.dataset.mode;
+      const payload = { email: form.get('email'), password: form.get('password') };
+      if (mode === 'register') payload.name = form.get('name');
+      try {
+        const result = await request(`/api/auth/${mode === 'register' ? 'register' : 'login'}`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        if (mode === 'admin' && result.user.role !== 'admin') {
+          await request('/api/auth/logout', { method: 'POST', body: '{}' });
+          renderAuth('admin', false, '管理者アカウントではありません。');
+          return;
+        }
+        currentUser = result.user;
+        const destination = currentUser.role === 'admin' ? '/admin' : '/';
+        history.pushState({ role: currentUser.role }, '', destination);
+        await showHome(true);
+      } catch (failure) {
+        const error = document.querySelector('#auth-error');
+        if (error) error.textContent = failure.message;
+      }
+    }
+
+    async function logout() {
+      await request('/api/auth/logout', { method: 'POST', body: '{}' });
+      currentUser = null;
+      history.pushState({}, '', '/');
+      await showHome(true);
+    }
+
+    async function showHome(animate = false) {
+      const currentRouteToken = ++routeToken;
+      if (source) source.close();
+      source = null;
+      race = null;
+      selectedEventId = null;
+      try {
+        const auth = await request('/api/auth/me');
+        if (currentRouteToken !== routeToken) return;
+        currentUser = auth.user;
+        if (location.pathname === '/login') {
+          renderAuth('login', animate);
+          return;
+        }
+        if (!currentUser) {
+          renderAuth(location.pathname === '/admin' ? 'admin' : 'login', animate);
+          return;
+        }
+        if (currentUser.role === 'admin') {
+          if (location.pathname !== '/admin') history.replaceState({ role: 'admin' }, '', '/admin');
+          const summary = await request('/api/admin/summary');
+          if (currentRouteToken === routeToken) renderAdmin(summary, animate);
+          return;
+        }
+        if (location.pathname === '/admin') history.replaceState({}, '', '/');
+        const races = await request('/api/races');
+        if (currentRouteToken === routeToken) renderOrganizer(races, animate);
+      } catch (failure) {
+        if (currentRouteToken === routeToken) app.innerHTML = `<div class="empty"><strong>ページを読み込めませんでした</strong>${escapeHtml(failure.message)}</div>`;
+      }
+    }
+
+    async function createRace(event) {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      try {
+        const created = await request('/api/races', {
+          method: 'POST',
+          body: JSON.stringify({ title: form.get('title'), date: form.get('date'), venue: form.get('venue') }),
+        });
+        history.pushState({ raceId: created.id }, '', `/r/${encodeURIComponent(created.id)}`);
+        await loadRace(created.id, true);
+      } catch (failure) {
+        const error = document.querySelector('#create-error');
+        if (error) error.textContent = failure.message;
+      }
+    }
+
+    function renderGroupPanel() {
+      if (!raceAccess.canManage) return '';
+      if (!raceAccess.isOwner) {
+        return `<section class="group-panel"><div class="group-panel-head"><div><h2>共同運営グループ</h2><p class="group-owner">主催者: ${escapeHtml(currentGroup?.owner?.name || '不明')}　/　この大会の共同運営メンバーです。</p></div><span class="group-role">共同運営者</span></div></section>`;
+      }
+      if (!currentGroup) {
+        return `<section class="group-panel"><div class="group-panel-head"><div><h2>大会の共同運営グループ</h2><p class="group-owner">登録済みの運営者を招待し、この大会を一緒に運営できます。</p></div><button class="primary" id="create-group">グループを作成</button></div><p class="error" id="group-error" role="alert"></p></section>`;
+      }
+      const members = currentGroup.members.map((member) => `<li><div><span class="group-member-name">${escapeHtml(member.name)}</span><span class="group-role">共同運営者</span><div class="group-member-detail">${escapeHtml(member.email)}</div></div><button class="danger" data-remove-collaborator="${member.id}">解除</button></li>`).join('');
+      return `<section class="group-panel"><div class="group-panel-head"><div><h2>共同運営グループ</h2><p class="group-owner">主催者: ${escapeHtml(currentGroup.owner?.name || '不明')}　${escapeHtml(currentGroup.owner?.email || '')}</p></div><span class="group-role">主催者</span></div><form class="group-invite-form" id="group-invite-form"><div class="field"><label for="collaborator-email">招待する運営者のメールアドレス</label><input id="collaborator-email" name="email" type="email" autocomplete="off" placeholder="organizer@example.com" required></div><button class="primary" type="submit">運営者を招待</button></form><p class="hint">招待相手は運営者アカウントへの登録が必要です。グループに参加すると、この大会の競技・記録を操作できます。</p><p class="error" id="group-error" role="alert"></p><ul class="group-members"><li><div><span class="group-member-name">${escapeHtml(currentGroup.owner?.name || '不明')}</span><span class="group-role">主催者</span><div class="group-member-detail">${escapeHtml(currentGroup.owner?.email || '')}</div></div></li>${members || '<li class="group-member-detail">共同運営者はまだいません。</li>'}</ul></section>`;
+    }
+
+    async function refreshRaceAccess(id) {
+      let access = { canManage: false, isOwner: false, isCollaborator: false };
+      let group = null;
+      if (currentUser?.role !== 'organizer') return { access, group };
+      try {
+        access = await request(`/api/races/${encodeURIComponent(id)}/access`);
+        if (access.canManage) {
+          const result = await request(`/api/races/${encodeURIComponent(id)}/group`);
+          group = result.group;
+        }
+      } catch {
+        access = { canManage: false, isOwner: false, isCollaborator: false };
+        group = null;
+      }
+      return { access, group };
+    }
+
+    function bindGroupControls() {
+      document.querySelector('#create-group')?.addEventListener('click', async () => {
+        try {
+          const result = await request(`/api/races/${encodeURIComponent(race.id)}/group`, { method: 'POST', body: '{}' });
+          currentGroup = result.group;
+          renderRace(true);
+        } catch (failure) {
+          const error = document.querySelector('#group-error');
+          if (error) error.textContent = failure.message;
+        }
+      });
+      document.querySelector('#group-invite-form')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        try {
+          const result = await request(`/api/races/${encodeURIComponent(race.id)}/group/members`, {
+            method: 'POST',
+            body: JSON.stringify({ email: form.get('email') }),
+          });
+          currentGroup = result.group;
+          renderRace(true);
+        } catch (failure) {
+          const error = document.querySelector('#group-error');
+          if (error) error.textContent = failure.message;
+        }
+      });
+      document.querySelectorAll('[data-remove-collaborator]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const member = currentGroup?.members.find((item) => item.id === button.dataset.removeCollaborator);
+          if (!member || !window.confirm(`${member.name} さんを共同運営グループから解除しますか？`)) return;
+          try {
+            const result = await request(`/api/races/${encodeURIComponent(race.id)}/group/members/${encodeURIComponent(member.id)}`, { method: 'DELETE' });
+            currentGroup = result.group;
+            renderRace(true);
+          } catch (failure) {
+            const error = document.querySelector('#group-error');
+            if (error) error.textContent = failure.message;
+          }
+        });
+      });
+    }
+
+    function renderRace(animate = false) {
+      const event = currentEvent();
+      const selectedId = event?.id || '';
+      const selectedAthletes = event?.athletes || [];
+      const finishedCount = selectedAthletes.filter((athlete) => athlete.finishedAt).length;
+      const started = Boolean(event?.startedAt);
+      const canManage = raceAccess.canManage;
+      const rankings = [...selectedAthletes].filter((athlete) => athlete.finishedAt)
+        .sort((left, right) => resultFor(event, left) - resultFor(event, right));
+      const placeByAthlete = new Map(rankings.map((athlete, index) => [athlete.id, index + 1]));
+      const rows = selectedAthletes.map((athlete) => {
+        const duration = resultFor(event, athlete);
+        const canFinish = started && !athlete.finishedAt;
+        return `<tr>
+          <td class="lane" data-label="レーン"><span class="lane-number">${athlete.lane}</span></td>
+          <td data-label="選手名"><span class="athlete-name">${escapeHtml(athlete.name)}</span></td>
+          <td class="team" data-label="所属">${escapeHtml(athlete.team || '—')}</td>
+          <td data-label="記録"><span class="place">${athlete.finishedAt ? `${placeByAthlete.get(athlete.id)}着` : '—'}</span><span class="result-time">${duration === null ? '—' : formatTime(duration)}</span></td>
+          <td data-label="状況"><span class="status ${athlete.finishedAt ? 'finished' : ''}">${athlete.finishedAt ? 'フィニッシュ' : started ? '競技中' : '未スタート'}</span></td>
+          ${canManage ? `<td data-label="操作"><button class="record-button" data-finish="${athlete.id}" ${canFinish ? '' : 'disabled'}>${athlete.finishedAt ? '記録済み' : 'FINISH'}</button></td>` : ''}
+        </tr>`;
+      }).join('');
+
+      app.innerHTML = `
+        <section class="race-head">
+          <div class="race-heading"><div><div class="eyebrow">大会速報</div><h1>${escapeHtml(race.title)}</h1><div class="race-meta"><span>${escapeHtml(race.date || '開催日未設定')}</span><span>${escapeHtml(race.venue || '会場未設定')}</span>${canManage ? '' : '<span class="viewer-badge">閲覧専用</span>'}</div></div><div class="head-actions">${canManage ? '<button class="secondary" id="dashboard-button">運営者ページ</button>' : ''}<button class="secondary" id="share-button">共有URLをコピー</button></div></div>
+          <div class="stats"><div class="stat"><strong>${race.events.length}</strong>競技</div><div class="stat"><strong>${event ? selectedAthletes.length : 0}</strong>出走</div><div class="stat"><strong>${finishedCount}</strong>記録</div></div>
+        </section>
+        ${renderGroupPanel()}
+        <section class="toolbar"><div class="toolbar-left"><div class="field"><label for="event-select">競技・組</label><select id="event-select" ${race.events.length ? '' : 'disabled'}>${race.events.length ? race.events.map((item) => `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(item.name)}${item.round ? `　${escapeHtml(item.round)}` : ''}</option>`).join('') : '<option>競技を登録してください</option>'}</select></div><span class="live-state" id="connection-state"><i class="live-dot"></i><span>接続中...</span></span></div>${canManage ? '<button class="primary" id="add-event">競技を追加</button>' : ''}</section>
+        ${event ? `<section aria-label="競技速報"><div class="table-wrap"><table><thead><tr><th class="lane">ﾚｰﾝ</th><th>選手名</th><th>所属</th><th>記録</th><th>状況</th>${canManage ? '<th>操作</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>${canManage ? `<div class="start-bar"><div class="start-copy"><strong>${started ? event.status === 'complete' ? '全員フィニッシュ' : 'レース進行中' : 'スタート待機中'}</strong><span>${started ? `スタート時刻を記録済み　/　${finishedCount} of ${selectedAthletes.length} finish` : 'スタート地点の端末でスタートを記録してください'}</span></div><button class="primary start-button" id="start-button" ${started ? 'disabled' : ''}>${started ? 'START RECORDED' : 'スタートを記録'}</button></div>` : ''}</section>` : `<div class="empty"><strong>競技がまだ登録されていません</strong>${canManage ? '「競技を追加」から最初の組と出走選手を登録してください。' : '大会運営者が競技を登録すると、ここに速報が表示されます。'}</div>`}
+        <div class="footnote"><span>時刻はサーバーと同期した端末時刻を使った速報値です。操作・通信環境により誤差が生じます。</span><span>${canManage ? '計時操作は大会運営者アカウントに限定されています。' : '共有URLは閲覧専用です。記録の変更は大会運営者のみ行えます。'}</span></div>`;
+      animatePage(animate);
+      bindGroupControls();
+
+      document.querySelector('#event-select')?.addEventListener('change', (changeEvent) => {
+        selectedEventId = changeEvent.currentTarget.value;
+        renderRace();
+      });
+      document.querySelector('#add-event').addEventListener('click', () => {
+        document.querySelector('#event-error').textContent = '';
+        eventDialog.showModal();
+      });
+      document.querySelector('#share-button').addEventListener('click', async () => {
+        const button = document.querySelector('#share-button');
+        try {
+          await navigator.clipboard.writeText(location.href);
+          button.textContent = 'コピーしました';
+          setTimeout(() => { button.textContent = '共有URLをコピー'; }, 1800);
+        } catch {
+          window.prompt('このURLを共有してください', location.href);
+        }
+      });
+      document.querySelector('#dashboard-button')?.addEventListener('click', () => {
+        history.pushState({}, '', '/');
+        showHome(true);
+      });
+      document.querySelector('#start-button')?.addEventListener('click', () => recordTime('start'));
+      document.querySelectorAll('[data-finish]').forEach((button) => {
+        button.addEventListener('click', () => recordTime('finish', button.dataset.finish));
+      });
+    }
+
+    async function recordTime(action, athleteId) {
+      const event = currentEvent();
+      if (!event) return;
+      const actionButton = action === 'start' ? document.querySelector('#start-button') : document.querySelector(`[data-finish="${athleteId}"]`);
+      if (actionButton) actionButton.disabled = true;
+      try {
+        await request(`/api/races/${encodeURIComponent(race.id)}/${action}`, {
+          method: 'POST',
+          body: JSON.stringify({ eventId: event.id, athleteId, clientTime: Date.now() + clockOffset }),
+        });
+      } catch (failure) {
+        if (actionButton) actionButton.disabled = false;
+        window.alert(failure.message);
+      }
+    }
+
+    async function addEvent(event) {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const athletes = String(form.get('athletes') || '').split('\n').map((line) => {
+        const [name, team = ''] = line.split('|');
+        return { name: name.trim(), team: team.trim() };
+      }).filter((athlete) => athlete.name);
+      const error = document.querySelector('#event-error');
+      try {
+        const result = await request(`/api/races/${encodeURIComponent(race.id)}/events`, {
+          method: 'POST',
+          body: JSON.stringify({ name: form.get('name'), round: form.get('round'), athletes }),
+        });
+        selectedEventId = result.event.id;
+        event.currentTarget.reset();
+        eventDialog.close();
+        renderRace();
+      } catch (failure) {
+        error.textContent = failure.message;
+      }
+    }
+
+    async function loadRace(id, animate = false) {
+      const currentRouteToken = ++routeToken;
+      try {
+        const auth = await request('/api/auth/me');
+        if (currentRouteToken !== routeToken) return;
+        currentUser = auth.user;
+        await syncClock();
+        const loadedRace = await request(`/api/races/${encodeURIComponent(id)}`);
+        if (currentRouteToken !== routeToken) return;
+        race = loadedRace;
+        const accessState = await refreshRaceAccess(id);
+        if (currentRouteToken !== routeToken) return;
+        raceAccess = accessState.access;
+        currentGroup = accessState.group;
+        selectedEventId = race.events[0]?.id || null;
+        if (source) source.close();
+        renderRace(animate);
+        source = new EventSource(`/api/races/${encodeURIComponent(id)}/stream`);
+        source.addEventListener('race', async (event) => {
+          const updatedRace = JSON.parse(event.data);
+          const accessState = await refreshRaceAccess(id);
+          if (currentRouteToken !== routeToken) return;
+          race = updatedRace;
+          raceAccess = accessState.access;
+          currentGroup = accessState.group;
+          if (!race.events.some((item) => item.id === selectedEventId)) selectedEventId = race.events[0]?.id || null;
+          renderRace();
+        });
+        source.addEventListener('deleted', () => {
+          source.close();
+          source = null;
+          app.innerHTML = '<div class="empty"><strong>この大会は削除されました</strong>大会運営者に新しい速報URLをご確認ください。</div>';
+        });
+        source.onopen = () => {
+          const state = document.querySelector('#connection-state');
+          if (state) { state.classList.add('connected'); state.lastElementChild.textContent = 'ライブ接続'; }
+        };
+        source.onerror = () => {
+          const state = document.querySelector('#connection-state');
+          if (state) { state.classList.remove('connected'); state.lastElementChild.textContent = '再接続中'; }
+        };
+      } catch (failure) {
+        if (currentRouteToken !== routeToken) return;
+        app.innerHTML = `<div class="empty"><strong>大会を開けませんでした</strong>${escapeHtml(failure.message)}<p><a href="/">大会トップへ戻る</a></p></div>`;
+      }
+    }
+
+    function showCurrentRoute(animate = false) {
+      const pathMatch = location.pathname.match(/^\/r\/([A-Za-z0-9_-]{12})$/);
+      const legacyId = new URLSearchParams(location.search).get('race');
+      const raceId = pathMatch?.[1] || legacyId;
+      if (legacyId && !pathMatch) {
+        history.replaceState({ raceId: legacyId }, '', `/r/${encodeURIComponent(legacyId)}`);
+      }
+      if (raceId) {
+        loadRace(raceId, animate);
+      } else {
+        showHome(animate);
+      }
+    }
+
+    document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => eventDialog.close()));
+    document.querySelector('#event-form').addEventListener('submit', addEvent);
+    window.addEventListener('popstate', () => showCurrentRoute(true));
+    showCurrentRoute();
+    setInterval(() => { syncClock().catch(() => {}); }, 15000);
+  </script>
+</body>
+</html>
