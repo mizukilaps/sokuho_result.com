@@ -1,0 +1,4 @@
+project_id = "sokuho-result"
+
+[functions.api]
+verify_jwt = false

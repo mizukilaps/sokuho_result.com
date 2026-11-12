@@ -1,1 +1,3 @@
 data/
+.wrangler/
+supabase/.temp/

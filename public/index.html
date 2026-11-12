@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#102b32">
   <title>速報記録 | SOKUHO</title>
+  <script>
+    const githubPagesBase = location.hostname.endsWith('.github.io')
+      ? `/${location.pathname.split('/').filter(Boolean)[0] || 'sokuho_result.com'}/`
+      : '/';
+    document.write(`<base href="${githubPagesBase}">`);
+  </script>
+  <script src="config.js"></script>
   <style>
     :root {
       color-scheme: light;
@@ -182,7 +189,7 @@
 <body>
   <header class="masthead">
     <div class="masthead-inner">
-      <a class="brand" href="/" aria-label="SOKUHO ホーム"><img class="sokuho-logo" src="/sokuho-logo.svg" alt="SOKUHO"></a>
+      <a class="brand" href="./" aria-label="SOKUHO ホーム"><img class="sokuho-logo" src="sokuho-logo.svg" alt="SOKUHO"></a>
       <span class="masthead-note">陸上競技　速報記録</span>
     </div>
   </header>
@@ -192,13 +199,13 @@
       <span class="sponsor-label">協賛</span>
       <div class="sponsor-list">
         <a class="sponsor-link sponsor-newbalance" href="https://www.newbalance.com/" target="_blank" rel="noopener noreferrer" aria-label="New Balance">
-          <img src="/newbalance.svg" alt=""><span class="sponsor-name">New Balance</span>
+          <img src="newbalance.svg" alt=""><span class="sponsor-name">New Balance</span>
         </a>
         <a class="sponsor-link sponsor-cramer" href="https://www.cramer.co.jp/" target="_blank" rel="noopener noreferrer" aria-label="Cramer Japan">
-          <img src="/cramer-japan.gif" alt="Cramer Japan">
+          <img src="cramer-japan.gif" alt="Cramer Japan">
         </a>
         <a class="sponsor-link sponsor-github" href="https://github.com/" target="_blank" rel="noopener noreferrer" aria-label="GitHub">
-          <img src="/github-mark.png" alt=""><span class="sponsor-name">GitHub</span>
+          <img src="github-mark.png" alt=""><span class="sponsor-name">GitHub</span>
         </a>
       </div>
     </div>
@@ -219,10 +226,13 @@
   <script>
     const app = document.querySelector('#app');
     const eventDialog = document.querySelector('#event-dialog');
+    const APP_BASE_PATH = document.querySelector('base').getAttribute('href').replace(/\/$/, '');
+    const API_BASE_URL = String(window.SOKUHO_CONFIG?.apiBaseUrl || '').replace(/\/$/, '');
+    const API_KEY = String(window.SOKUHO_CONFIG?.anonKey || '');
     let race = null;
     let selectedEventId = null;
     let clockOffset = 0;
-    let source = null;
+    let racePollTimer = null;
     let routeToken = 0;
     let currentUser = null;
     let raceAccess = { canManage: false, isOwner: false, isCollaborator: false };
@@ -232,11 +242,33 @@
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     })[character]);
 
+    function pageUrl(path = '/') {
+      const route = path.startsWith('/') ? path : `/${path}`;
+      return `${APP_BASE_PATH}${route}` || '/';
+    }
+
+    function routePath() {
+      const pathname = location.pathname;
+      return APP_BASE_PATH && pathname.startsWith(`${APP_BASE_PATH}/`)
+        ? pathname.slice(APP_BASE_PATH.length)
+        : pathname === APP_BASE_PATH ? '/' : pathname;
+    }
+
     async function request(url, options = {}) {
-      const response = await fetch(url, {
+      const headers = { 'content-type': 'application/json', ...(options.headers || {}) };
+      if (API_KEY) headers.apikey = API_KEY;
+      const sessionToken = localStorage.getItem('sokuho_session');
+      if (sessionToken) headers['x-sokuho-session'] = sessionToken;
+      const endpoint = API_BASE_URL && url.startsWith('/api/') ? `${API_BASE_URL}${url}` : url;
+      const response = await fetch(endpoint, {
         ...options,
-        headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+        headers,
       });
+      const updatedSession = response.headers.get('x-sokuho-session');
+      if (updatedSession !== null) {
+        if (updatedSession) localStorage.setItem('sokuho_session', updatedSession);
+        else localStorage.removeItem('sokuho_session');
+      }
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || '通信に失敗しました');
       return result;
@@ -307,7 +339,7 @@
             </div>
             <form class="auth-form" id="auth-form" data-mode="${mode}">
               <h2>${registering ? '運営者アカウントを作成' : adminMode ? '管理者ログイン' : '運営者ログイン'}</h2>
-              <p class="auth-description">${registering ? '登録後、大会の作成・記録操作ができます。' : adminMode ? '開発用の管理者アカウントでログインしてください。管理者登録は公開していません。' : '大会を作成・運営する方はこちらからログインしてください。'}</p>
+              <p class="auth-description">${registering ? '登録後、大会の作成・記録操作ができます。' : adminMode ? '管理者アカウントでログインしてください。管理者登録は公開していません。' : '大会を作成・運営する方はこちらからログインしてください。'}</p>
               ${registering ? '<div class="field"><label for="auth-name">お名前</label><input id="auth-name" name="name" autocomplete="name" required maxlength="60"></div>' : ''}
               <div class="field"><label for="auth-email">メールアドレス</label><input id="auth-email" name="email" type="email" autocomplete="username" required maxlength="254"></div>
               <div class="field"><label for="auth-password">パスワード${registering ? '（12文字以上）' : ''}</label><input id="auth-password" name="password" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" ${registering ? 'minlength="12"' : ''} required></div>
@@ -339,7 +371,7 @@
             <button class="primary wide" type="submit">大会ページを作成</button>
           </form>
         </section>
-        <section class="dashboard-list"><h2>担当する大会</h2>${races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>開催日</th><th>会場</th><th>役割</th><th>主催者</th><th>共同運営者数</th><th>競技数</th><th></th></tr></thead><tbody>${races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="開催日">${escapeHtml(item.date || '—')}</td><td data-label="会場">${escapeHtml(item.venue || '—')}</td><td data-label="役割">${item.relation === 'owner' ? '主催者' : '共同運営者'}</td><td data-label="主催者">${escapeHtml(item.owner?.name || '不明')}</td><td data-label="共同運営者数">${item.groupMemberCount}</td><td data-label="競技数">${item.events.length}</td><td data-label="操作"><a href="/r/${encodeURIComponent(item.id)}" data-race-id="${item.id}">大会を開く</a></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">担当する大会はまだありません。</div>'}</section>`;
+        <section class="dashboard-list"><h2>担当する大会</h2>${races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>開催日</th><th>会場</th><th>役割</th><th>主催者</th><th>共同運営者数</th><th>競技数</th><th></th></tr></thead><tbody>${races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="開催日">${escapeHtml(item.date || '—')}</td><td data-label="会場">${escapeHtml(item.venue || '—')}</td><td data-label="役割">${item.relation === 'owner' ? '主催者' : '共同運営者'}</td><td data-label="主催者">${escapeHtml(item.owner?.name || '不明')}</td><td data-label="共同運営者数">${item.groupMemberCount}</td><td data-label="競技数">${item.events.length}</td><td data-label="操作"><a href="${pageUrl(`/r/${encodeURIComponent(item.id)}`)}" data-race-id="${item.id}">大会を開く</a></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">担当する大会はまだありません。</div>'}</section>`;
       animatePage(animate);
       document.querySelector('#create-form').addEventListener('submit', createRace);
       document.querySelector('#logout-button').addEventListener('click', logout);
@@ -358,7 +390,7 @@
         <section class="intro dashboard-heading"><div><div class="eyebrow">DEVELOPER CONSOLE</div><h1>管理者ダッシュボード</h1><p class="intro-copy">ログイン中: ${escapeHtml(currentUser.email)}</p></div><button class="secondary" id="logout-button">ログアウト</button></section>
         <div class="admin-stats"><div class="stat"><strong>${summary.organizerCount}</strong>運営者</div><div class="stat"><strong>${summary.raceCount}</strong>大会</div></div>
         <section class="admin-table"><h2>運営者アカウント</h2>${summary.organizers.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>主催大会</th><th>共同参加</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.organizers.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}</td><td data-label="主催大会">${item.ownedRaceCount}</td><td data-label="共同参加">${item.collaborationCount}</td><td data-label="登録日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="操作"><button class="danger" data-delete-organizer="${item.id}" data-organizer-name="${escapeHtml(item.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">運営者はまだ登録されていません。</div>'}</section>
-        <section class="admin-table"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="大会"><a href="/r/${encodeURIComponent(item.id)}">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>`;
+        <section class="admin-table"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="大会"><a href="${pageUrl(`/r/${encodeURIComponent(item.id)}`)}">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>`;
       animatePage(animate);
       document.querySelector('#logout-button').addEventListener('click', logout);
       document.querySelectorAll('[data-delete-organizer]').forEach((button) => {
@@ -401,7 +433,7 @@
         }
         currentUser = result.user;
         const destination = currentUser.role === 'admin' ? '/admin' : '/';
-        history.pushState({ role: currentUser.role }, '', destination);
+        history.pushState({ role: currentUser.role }, '', pageUrl(destination));
         await showHome(true);
       } catch (failure) {
         const error = document.querySelector('#auth-error');
@@ -412,35 +444,35 @@
     async function logout() {
       await request('/api/auth/logout', { method: 'POST', body: '{}' });
       currentUser = null;
-      history.pushState({}, '', '/');
+      history.pushState({}, '', pageUrl('/'));
       await showHome(true);
     }
 
     async function showHome(animate = false) {
       const currentRouteToken = ++routeToken;
-      if (source) source.close();
-      source = null;
+      clearTimeout(racePollTimer);
+      racePollTimer = null;
       race = null;
       selectedEventId = null;
       try {
         const auth = await request('/api/auth/me');
         if (currentRouteToken !== routeToken) return;
         currentUser = auth.user;
-        if (location.pathname === '/login') {
+        if (routePath() === '/login') {
           renderAuth('login', animate);
           return;
         }
         if (!currentUser) {
-          renderAuth(location.pathname === '/admin' ? 'admin' : 'login', animate);
+          renderAuth(routePath() === '/admin' ? 'admin' : 'login', animate);
           return;
         }
         if (currentUser.role === 'admin') {
-          if (location.pathname !== '/admin') history.replaceState({ role: 'admin' }, '', '/admin');
+          if (routePath() !== '/admin') history.replaceState({ role: 'admin' }, '', pageUrl('/admin'));
           const summary = await request('/api/admin/summary');
           if (currentRouteToken === routeToken) renderAdmin(summary, animate);
           return;
         }
-        if (location.pathname === '/admin') history.replaceState({}, '', '/');
+        if (routePath() === '/admin') history.replaceState({}, '', pageUrl('/'));
         const races = await request('/api/races');
         if (currentRouteToken === routeToken) renderOrganizer(races, animate);
       } catch (failure) {
@@ -456,7 +488,7 @@
           method: 'POST',
           body: JSON.stringify({ title: form.get('title'), date: form.get('date'), venue: form.get('venue') }),
         });
-        history.pushState({ raceId: created.id }, '', `/r/${encodeURIComponent(created.id)}`);
+        history.pushState({ raceId: created.id }, '', pageUrl(`/r/${encodeURIComponent(created.id)}`));
         await loadRace(created.id, true);
       } catch (failure) {
         const error = document.querySelector('#create-error');
@@ -474,23 +506,6 @@
       }
       const members = currentGroup.members.map((member) => `<li><div><span class="group-member-name">${escapeHtml(member.name)}</span><span class="group-role">共同運営者</span><div class="group-member-detail">${escapeHtml(member.email)}</div></div><button class="danger" data-remove-collaborator="${member.id}">解除</button></li>`).join('');
       return `<section class="group-panel"><div class="group-panel-head"><div><h2>共同運営グループ</h2><p class="group-owner">主催者: ${escapeHtml(currentGroup.owner?.name || '不明')}　${escapeHtml(currentGroup.owner?.email || '')}</p></div><span class="group-role">主催者</span></div><form class="group-invite-form" id="group-invite-form"><div class="field"><label for="collaborator-email">招待する運営者のメールアドレス</label><input id="collaborator-email" name="email" type="email" autocomplete="off" placeholder="organizer@example.com" required></div><button class="primary" type="submit">運営者を招待</button></form><p class="hint">招待相手は運営者アカウントへの登録が必要です。グループに参加すると、この大会の競技・記録を操作できます。</p><p class="error" id="group-error" role="alert"></p><ul class="group-members"><li><div><span class="group-member-name">${escapeHtml(currentGroup.owner?.name || '不明')}</span><span class="group-role">主催者</span><div class="group-member-detail">${escapeHtml(currentGroup.owner?.email || '')}</div></div></li>${members || '<li class="group-member-detail">共同運営者はまだいません。</li>'}</ul></section>`;
-    }
-
-    async function refreshRaceAccess(id) {
-      let access = { canManage: false, isOwner: false, isCollaborator: false };
-      let group = null;
-      if (currentUser?.role !== 'organizer') return { access, group };
-      try {
-        access = await request(`/api/races/${encodeURIComponent(id)}/access`);
-        if (access.canManage) {
-          const result = await request(`/api/races/${encodeURIComponent(id)}/group`);
-          group = result.group;
-        }
-      } catch {
-        access = { canManage: false, isOwner: false, isCollaborator: false };
-        group = null;
-      }
-      return { access, group };
     }
 
     function bindGroupControls() {
@@ -589,7 +604,7 @@
         }
       });
       document.querySelector('#dashboard-button')?.addEventListener('click', () => {
-        history.pushState({}, '', '/');
+        history.pushState({}, '', pageUrl('/'));
         showHome(true);
       });
       document.querySelector('#start-button')?.addEventListener('click', () => recordTime('start'));
@@ -638,57 +653,63 @@
 
     async function loadRace(id, animate = false) {
       const currentRouteToken = ++routeToken;
+      clearTimeout(racePollTimer);
+      racePollTimer = null;
       try {
         const auth = await request('/api/auth/me');
         if (currentRouteToken !== routeToken) return;
         currentUser = auth.user;
         await syncClock();
-        const loadedRace = await request(`/api/races/${encodeURIComponent(id)}`);
+        const snapshot = await request(`/api/races/${encodeURIComponent(id)}/snapshot`);
         if (currentRouteToken !== routeToken) return;
-        race = loadedRace;
-        const accessState = await refreshRaceAccess(id);
-        if (currentRouteToken !== routeToken) return;
-        raceAccess = accessState.access;
-        currentGroup = accessState.group;
+        race = snapshot.race;
+        raceAccess = snapshot.access;
+        currentGroup = snapshot.group;
         selectedEventId = race.events[0]?.id || null;
-        if (source) source.close();
         renderRace(animate);
-        source = new EventSource(`/api/races/${encodeURIComponent(id)}/stream`);
-        source.addEventListener('race', async (event) => {
-          const updatedRace = JSON.parse(event.data);
-          const accessState = await refreshRaceAccess(id);
-          if (currentRouteToken !== routeToken) return;
-          race = updatedRace;
-          raceAccess = accessState.access;
-          currentGroup = accessState.group;
-          if (!race.events.some((item) => item.id === selectedEventId)) selectedEventId = race.events[0]?.id || null;
-          renderRace();
-        });
-        source.addEventListener('deleted', () => {
-          source.close();
-          source = null;
-          app.innerHTML = '<div class="empty"><strong>この大会は削除されました</strong>大会運営者に新しい速報URLをご確認ください。</div>';
-        });
-        source.onopen = () => {
-          const state = document.querySelector('#connection-state');
-          if (state) { state.classList.add('connected'); state.lastElementChild.textContent = 'ライブ接続'; }
-        };
-        source.onerror = () => {
-          const state = document.querySelector('#connection-state');
-          if (state) { state.classList.remove('connected'); state.lastElementChild.textContent = '再接続中'; }
-        };
+        pollRace(id, currentRouteToken);
       } catch (failure) {
         if (currentRouteToken !== routeToken) return;
-        app.innerHTML = `<div class="empty"><strong>大会を開けませんでした</strong>${escapeHtml(failure.message)}<p><a href="/">大会トップへ戻る</a></p></div>`;
+        app.innerHTML = `<div class="empty"><strong>大会を開けませんでした</strong>${escapeHtml(failure.message)}<p><a href="${pageUrl('/')}">大会トップへ戻る</a></p></div>`;
+      }
+    }
+
+    async function pollRace(id, currentRouteToken) {
+      try {
+        const snapshot = await request(`/api/races/${encodeURIComponent(id)}/snapshot`);
+        if (currentRouteToken !== routeToken) return;
+        const raceChanged = JSON.stringify(snapshot.race) !== JSON.stringify(race);
+        const accessChanged = JSON.stringify(snapshot.access) !== JSON.stringify(raceAccess);
+        const groupChanged = JSON.stringify(snapshot.group) !== JSON.stringify(currentGroup);
+        race = snapshot.race;
+        raceAccess = snapshot.access;
+        currentGroup = snapshot.group;
+        if (raceChanged || accessChanged || groupChanged) {
+          if (!race.events.some((item) => item.id === selectedEventId)) selectedEventId = race.events[0]?.id || null;
+          renderRace();
+        }
+        const state = document.querySelector('#connection-state');
+        if (state) { state.classList.add('connected'); state.lastElementChild.textContent = '同期中'; }
+      } catch (failure) {
+        if (currentRouteToken !== routeToken) return;
+        if (failure.message === '大会が見つかりません') {
+          app.innerHTML = '<div class="empty"><strong>この大会は削除されました</strong>大会運営者に新しい速報URLをご確認ください。</div>';
+          return;
+        }
+        const state = document.querySelector('#connection-state');
+        if (state) { state.classList.remove('connected'); state.lastElementChild.textContent = '再接続中'; }
+      }
+      if (currentRouteToken === routeToken) {
+        racePollTimer = setTimeout(() => pollRace(id, currentRouteToken), 15000);
       }
     }
 
     function showCurrentRoute(animate = false) {
-      const pathMatch = location.pathname.match(/^\/r\/([A-Za-z0-9_-]{12})$/);
+      const pathMatch = routePath().match(/^\/r\/([A-Za-z0-9_-]{12})$/);
       const legacyId = new URLSearchParams(location.search).get('race');
       const raceId = pathMatch?.[1] || legacyId;
       if (legacyId && !pathMatch) {
-        history.replaceState({ raceId: legacyId }, '', `/r/${encodeURIComponent(legacyId)}`);
+        history.replaceState({ raceId: legacyId }, '', pageUrl(`/r/${encodeURIComponent(legacyId)}`));
       }
       if (raceId) {
         loadRace(raceId, animate);
@@ -701,7 +722,7 @@
     document.querySelector('#event-form').addEventListener('submit', addEvent);
     window.addEventListener('popstate', () => showCurrentRoute(true));
     showCurrentRoute();
-    setInterval(() => { syncClock().catch(() => {}); }, 15000);
+    setInterval(() => { syncClock().catch(() => {}); }, 300000);
   </script>
 </body>
 </html>

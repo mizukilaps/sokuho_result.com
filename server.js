@@ -205,6 +205,20 @@ function routeRace(request, response, url, user) {
     return;
   }
 
+  if (action === 'snapshot' && request.method === 'GET') {
+    const canManage = canManageRace(user, race);
+    sendJson(response, 200, {
+      race: publicRace(race),
+      access: {
+        canManage,
+        isOwner: ownsRace(user, race),
+        isCollaborator: collaboratesOnRace(user, race),
+      },
+      group: canManage ? groupDetails(race, readAccounts()) : null,
+    });
+    return;
+  }
+
   if (action === 'access' && request.method === 'GET') {
     if (user?.role !== 'organizer') {
       sendJson(response, user ? 403 : 401, { error: '運営者としてログインしてください' });

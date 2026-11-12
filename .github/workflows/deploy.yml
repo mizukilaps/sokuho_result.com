@@ -1,0 +1,85 @@
+name: Deploy Supabase API
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 12 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-supabase
+  cancel-in-progress: false
+
+env:
+  SUPABASE_PROJECT_ID: cfaowiuefyrmpksavenh
+
+jobs:
+  keep-supabase-active:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check database activity
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || { echo "::error::Missing SUPABASE_SERVICE_ROLE_KEY"; exit 1; }
+          curl --fail --silent --show-error --max-time 30 \
+            "https://${SUPABASE_PROJECT_ID}.supabase.co/functions/v1/api/api/auth/me" \
+            --header "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            --header "authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            --output /dev/null
+
+  deploy-api:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Validate deployment settings
+        env:
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SOKUHO_ADMIN_EMAIL: ${{ secrets.SOKUHO_ADMIN_EMAIL }}
+          SOKUHO_ADMIN_PASSWORD: ${{ secrets.SOKUHO_ADMIN_PASSWORD }}
+        run: |
+          test -n "$CLOUDFLARE_PAGES_PROJECT" || { echo "::error::Missing CLOUDFLARE_PAGES_PROJECT"; exit 1; }
+          test -n "$SUPABASE_ACCESS_TOKEN" || { echo "::error::Missing SUPABASE_ACCESS_TOKEN"; exit 1; }
+          test -n "$SUPABASE_DB_PASSWORD" || { echo "::error::Missing SUPABASE_DB_PASSWORD"; exit 1; }
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || { echo "::error::Missing SUPABASE_SERVICE_ROLE_KEY"; exit 1; }
+          test -n "$SOKUHO_ADMIN_EMAIL" || { echo "::error::Missing SOKUHO_ADMIN_EMAIL"; exit 1; }
+          test -n "$SOKUHO_ADMIN_PASSWORD" || { echo "::error::Missing SOKUHO_ADMIN_PASSWORD"; exit 1; }
+          test ${#SOKUHO_ADMIN_PASSWORD} -ge 12 || { echo "::error::SOKUHO_ADMIN_PASSWORD must be at least 12 characters"; exit 1; }
+
+      - name: Apply database migration
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+          supabase db push --linked --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Configure and deploy Supabase API
+        env:
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SOKUHO_ADMIN_EMAIL: ${{ secrets.SOKUHO_ADMIN_EMAIL }}
+          SOKUHO_ADMIN_PASSWORD: ${{ secrets.SOKUHO_ADMIN_PASSWORD }}
+        run: |
+          supabase secrets set --project-ref "$SUPABASE_PROJECT_ID" \
+            "APP_ORIGIN=https://${CLOUDFLARE_PAGES_PROJECT}.pages.dev" \
+            "SUPABASE_URL=https://${SUPABASE_PROJECT_ID}.supabase.co" \
+            "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY" \
+            "SOKUHO_ADMIN_EMAIL=$SOKUHO_ADMIN_EMAIL" \
+            "SOKUHO_ADMIN_PASSWORD=$SOKUHO_ADMIN_PASSWORD"
+          supabase functions deploy api --project-ref "$SUPABASE_PROJECT_ID" --no-verify-jwt --use-api

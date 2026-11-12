@@ -1,6 +1,6 @@
 # Sokuho Result
 
-陸上競技の速報記録を共有するWebアプリです。Node.js 24以降で動作し、外部パッケージは不要です。
+陸上競技の速報記録を共有するWebアプリです。ローカル開発はNode.js 24以降で動作し、公開版はCloudflare PagesとSupabase Freeを使用します。
 
 ## 起動
 
@@ -8,7 +8,7 @@
 node server.js
 ```
 
-管理者画面を使う場合は、起動前に開発者用アカウントを環境変数で設定します。管理者登録画面は公開していません。
+ローカルで管理者画面を使う場合は、起動前に開発用アカウントを設定します。管理者登録画面は公開していません。
 
 ```sh
 bash setup-admin.sh
@@ -22,9 +22,9 @@ bash setup-admin.sh
 
 - 閲覧者: 登録・ログイン不要です。大会運営者から受け取った速報URLを開いて閲覧します。記録操作はできません。
 - 運営者: メールアドレスと12文字以上のパスワードで登録します。自分が作成した大会の編集・スタート・フィニッシュ記録を操作できます。
-- 管理者: `ADMIN_EMAIL` と `ADMIN_PASSWORD` で起動時に作成される開発用アカウントです。管理者タブからログインし、登録運営者と大会の一覧を確認・削除できます。運営者アカウントを削除すると、その運営者の主催大会・記録とログインセッションを削除し、他大会の共同運営グループからも解除します。管理者アカウントはこの画面から削除できません。一般登録から管理者にはなれません。
+- 管理者: ローカルでは `ADMIN_EMAIL` と `ADMIN_PASSWORD` で起動時に作成され、公開版ではGitHub Actions Secretsの `SOKUHO_ADMIN_EMAIL` と `SOKUHO_ADMIN_PASSWORD` で初回APIアクセス時に作成されます。管理者タブから登録運営者と大会の一覧を確認・削除できます。運営者アカウントを削除すると、その運営者の主催大会・記録とログインセッションを削除し、他大会の共同運営グループからも解除します。管理者アカウントはこの画面から削除できません。一般登録から管理者にはなれません。
 
-アカウントとセッションは `data/accounts.json` に保存されます。パスワードはソルト付きハッシュ、セッションはHttpOnly Cookieで管理します。管理者パスワードを含む環境変数はソース管理へ登録しないでください。
+ローカル版のアカウントとセッションは `data/accounts.json` に保存されます。公開版ではアカウント・大会・セッションをSupabaseに保存し、パスワードはソルト付きハッシュで管理します。ログインセッションはブラウザーのlocalStorageに保存されます。SupabaseのService Role Keyや管理者パスワードをソース管理へ登録しないでください。
 
 ## 大会ごとの共同運営
 
@@ -37,15 +37,46 @@ bash setup-admin.sh
 1. 運営者としてログインし、大会ページの「競技を追加」から競技名、組、選手名を登録します。
 2. スタート地点の端末で「スタートを記録」を押します。
 3. フィニッシュ地点の端末で、通過した選手の「FINISH」を押します。
-4. 記録と着順は共有ページにリアルタイムで反映されます。
+4. 記録と着順は共有ページに最大15秒程度で反映されます。
 
-大会データは `data/races.json` に保存されます。共有URLは閲覧専用で、記録を編集できるのは大会を作成した運営者だけです。
+ローカル大会データは `data/races.json`、公開版データはSupabaseに保存されます。共有URLは閲覧専用で、記録を編集できるのは大会を作成した運営者だけです。
 
 ## 公開について
 
-一般の人がアクセスするには、このNode.jsサーバーをHTTPS対応のホスティング環境へ配置してください。閲覧者にアカウントは不要です。大会の作成・記録操作には運営者アカウントが必要です。
+このリポジトリはCloudflare PagesのGit連携で自動公開し、Supabase FreeをAPI・DBとして使用します。公開URLは `https://<Cloudflare Pagesのプロジェクト名>.pages.dev/` で、GitHubのユーザー名はURLに入りません。大会の共有URLはそこに `r/<ID>` を付けたものです。閲覧者にアカウントは不要です。
 
-記録は端末のボタン操作と端末間の時刻同期による速報値です。操作・通信環境による誤差があり、自動カメラ判定や公認計時を行うものではありません。
+### 初回設定（画面を見ながら順番に進める）
+
+Cloudflare Pagesの静的ファイル配信は無料です。Supabase FreeでもAPIリクエスト数は無制限ですが、Edge Functionは月50万回、DBは500MB、通信量などの無料枠上限があります。Supabase Freeは低利用状態が7日続くと一時停止される場合があり、これを無効にする設定はありません。この構成ではGitHub ActionsからSupabaseのDBを毎日確認して低利用状態になりにくくしますが、Supabaseの一時停止を無効化・保証するものではありません。最新条件は[Supabase料金表](https://supabase.com/pricing)と[Cloudflare Pages料金](https://pages.cloudflare.com/)で確認してください。
+
+1. **Cloudflare Pagesプロジェクトを作る**
+   - [Cloudflare Dashboard](https://dash.cloudflare.com/sign-up)で無料アカウントを作成／ログインします。Workers Paidへの変更は不要です。
+   - **Workers & Pages → Create application → Pages → Connect to Git** を選び、GitHubを接続してこのリポジトリを選びます。
+   - Project nameは `sokuho-result` などユーザー名を含まない文字列にします。使用済みなら末尾に数字を追加します。Framework presetは **None**、Build commandは `node build-pages.mjs`、Build output directoryは `public` にして作成します。公開URLは `https://<project-name>.pages.dev/` になり、GitHubのユーザー名は含まれません。
+   - Pagesプロジェクトの **Settings → Environment variables → Production** に `SUPABASE_ANON_KEY` を追加します。値はSupabaseの公開用 anon / publishable keyです。
+   - 作成直後の初回ビルドが環境変数未設定で失敗した場合は、変数を保存した後に **Deployments → Retry deployment** を押します。
+2. **既存Supabaseプロジェクトの接続情報を確認**
+   - すでに作成した [Supabaseプロジェクト](https://supabase.com/dashboard/project/cfaowiuefyrmpksavenh)を使います。課金プランの変更は不要です。Project IDは `cfaowiuefyrmpksavenh` です。
+   - Supabaseの **Project Settings → API** から公開用 `anon` / `publishable` keyと `service_role` keyを確認します。公開用keyはCloudflare Pagesへ、`service_role` keyはGitHub Secretへ登録します。`service_role` keyは漏らさないでください。秘密のkeyはチャットへ送らないでください。
+   - Supabaseの **Project Settings → Database** でDatabase passwordを確認します。分からなければ再設定します。
+   - Supabaseアカウントの **Access Tokens** からGitHub Actions用のAccess Tokenを作成します。
+3. **GitHub Actionsに値を登録**
+   - このリポジトリの **Settings → Secrets and variables → Actions** を開きます。
+   - **Variables**に `CLOUDFLARE_PAGES_PROJECT` を追加します。値は手順1で設定したProject nameです。
+   - **Secrets**に次の5項目を追加します。
+     - `SUPABASE_ACCESS_TOKEN` — 手順2のSupabase Access Token
+     - `SUPABASE_DB_PASSWORD` — Supabase Database password
+     - `SUPABASE_SERVICE_ROLE_KEY` — Supabaseの `service_role` key
+     - `SOKUHO_ADMIN_EMAIL` — 速報アプリの管理者メールアドレス
+     - `SOKUHO_ADMIN_PASSWORD` — 管理者パスワード（12文字以上）
+   - 値を入力したら **Add variable** / **Add secret** を押します。秘密の値はチャットへ送らないでください。
+4. **変更をGitHubへ送信**
+   - VS Code左側の **ソース管理**を開き、変更をコミットして `main` へ **Push / Sync Changes** します。この作業環境から私が直接pushするにはGitHubログインが必要ですが、ご自身のVS Codeから送信すれば `gh auth login` は不要です。
+5. **公開を確認**
+   - GitHubリポジトリの **Actions** で **Deploy Supabase API** が成功し、Cloudflare Pagesの **Deployments** も成功するまで待ちます。GitHubへのpush後、両方とも自動で実行されます。
+   - `https://<手順1で設定したProject name>.pages.dev/` を開きます。大会作成後に発行される `r/<ID>` 付きURLを閲覧者へ共有してください。
+
+速報画面は無料枠の利用量を抑えるため15秒間隔で同期します。記録は端末のボタン操作と端末間の時刻同期による速報値です。操作・通信環境による誤差があり、自動カメラ判定や公認計時を行うものではありません。
 
 ## ロゴ素材
 
