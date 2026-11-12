@@ -58,14 +58,14 @@ Cloudflare Pagesの静的ファイル配信は無料です。Supabase Freeでも
 2. **既存Supabaseプロジェクトの接続情報を確認**
    - すでに作成した [Supabaseプロジェクト](https://supabase.com/dashboard/project/cfaowiuefyrmpksavenh)を使います。課金プランの変更は不要です。Project IDは `cfaowiuefyrmpksavenh` です。
    - Supabaseの **Project Settings → API** から公開用 `anon` / `publishable` keyと `service_role` keyを確認します。公開用keyはCloudflare Pagesへ、`service_role` keyはGitHub Secretへ登録します。`service_role` keyは漏らさないでください。秘密のkeyはチャットへ送らないでください。
-   - Supabaseの **Project Settings → Database** でDatabase passwordを確認します。分からなければ再設定します。
+   - Supabase画面上部の **Connect → Session pooler** を選び、接続文字列をコピーします。GitHub ActionsのネットワークからIPv4でDBに接続するため、**Direct connectionではなくSession pooler**を使います。文字列内の `[YOUR-PASSWORD]` はDatabase passwordに置き換えます。パスワードに `@` や `#` などが含まれる場合はURLエンコードが必要です。
    - Supabaseアカウントの **Access Tokens** からGitHub Actions用のAccess Tokenを作成します。
 3. **GitHub Actionsに値を登録**
    - このリポジトリの **Settings → Secrets and variables → Actions** を開きます。
    - **Variables**に `CLOUDFLARE_PAGES_PROJECT` を追加します。値は手順1で設定したProject nameです。
    - **Secrets**に次の5項目を追加します。
      - `SUPABASE_ACCESS_TOKEN` — 手順2のSupabase Access Token
-     - `SUPABASE_DB_PASSWORD` — Supabase Database password
+     - `SUPABASE_DB_URL` — 上記のSession pooler接続文字列（パスワードを含むためSecretに保存）
      - `SUPABASE_SERVICE_ROLE_KEY` — Supabaseの `service_role` key
      - `SOKUHO_ADMIN_EMAIL` — 速報アプリの管理者メールアドレス
      - `SOKUHO_ADMIN_PASSWORD` — 管理者パスワード（12文字以上）
