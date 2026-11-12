@@ -76,10 +76,8 @@ jobs:
           SOKUHO_ADMIN_EMAIL: ${{ secrets.SOKUHO_ADMIN_EMAIL }}
           SOKUHO_ADMIN_PASSWORD: ${{ secrets.SOKUHO_ADMIN_PASSWORD }}
         run: |
-          supabase secrets set --project-ref "$SUPABASE_PROJECT_ID" \
+          supabase secrets set --project-ref "$SUPABASE_PROJECT_ID" --yes \
             "APP_ORIGIN=https://${CLOUDFLARE_PAGES_PROJECT}.pages.dev" \
-            "SUPABASE_URL=https://${SUPABASE_PROJECT_ID}.supabase.co" \
-            "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY" \
             "SOKUHO_ADMIN_EMAIL=$SOKUHO_ADMIN_EMAIL" \
             "SOKUHO_ADMIN_PASSWORD=$SOKUHO_ADMIN_PASSWORD"
           supabase functions deploy api --project-ref "$SUPABASE_PROJECT_ID" --no-verify-jwt --use-api
