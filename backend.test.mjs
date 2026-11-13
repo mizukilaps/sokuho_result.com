@@ -138,12 +138,33 @@ test('organizers can request help and change a temporary password, while admins 
     password: 'organizer-password-new-456',
   })).status, 200);
 
+  const raceResponse = await request('/api/races', {
+    title: '公開テスト大会',
+    date: '2026-11-13',
+  }, temporarySession);
+  const race = await json(raceResponse);
+  assert.equal(raceResponse.status, 201);
+  const publicSnapshot = await json(await request(`/api/races/${race.id}/snapshot`));
+  assert.equal(publicSnapshot.race.id, race.id);
+  assert.deepEqual(publicSnapshot.access, { canManage: false, isOwner: false, isCollaborator: false });
+  assert.equal(publicSnapshot.group, null);
+  const addEvent = await request(`/api/races/${race.id}/events`, {
+    name: '男子100m',
+    athletes: [{ name: 'テスト選手' }],
+  }, temporarySession);
+  assert.equal(addEvent.status, 201);
+  const publicRaceAfterUpdate = await json(await request(`/api/races/${race.id}`));
+  assert.equal(publicRaceAfterUpdate.id, race.id);
+  assert.equal(publicRaceAfterUpdate.events[0].name, '男子100m');
+
   const announcement = await request('/api/admin/announcements', {
     title: 'アップデートのお知らせ',
     message: '新機能を追加しました。',
     important: true,
   }, adminSession);
   assert.equal(announcement.status, 201);
+  const adminSummary = await json(await request('/api/admin/summary', undefined, adminSession));
+  assert.equal(adminSummary.races[0].publicPath, `/r/${race.id}`);
   const portal = await json(await request('/api/organizer/portal', undefined, temporarySession));
   assert.equal(portal.supportTickets.length, 1);
   assert.equal(portal.supportTickets[0].messages.at(-1).senderRole, 'admin');

@@ -459,6 +459,7 @@ async function routeApi(request, env, url, user, tokenHash) {
       })),
       races: races.map((race) => ({
         id: race.id,
+        publicPath: `/r/${race.id}`,
         title: race.title,
         owner: accountLabel(state.accounts, race.ownerId),
         collaborators: groupDetails(race, state.accounts)?.members || [],

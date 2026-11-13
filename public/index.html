@@ -138,6 +138,7 @@
     .portal-item h3 { margin: 0 0 7px; font-size: 15px; }
     .portal-item p { white-space: pre-wrap; line-height: 1.65; }
     .portal-meta { color: var(--muted); font-size: 11px; }
+    .race-url { overflow-wrap: anywhere; }
     .portal-message { margin: 12px 0; padding: 10px 12px; background: #f5f2f9; font-size: 12px; white-space: pre-wrap; }
     .portal-message.admin-message { background: #eee9f5; }
     .portal-actions { display: flex; align-items: end; gap: 10px; margin-top: 12px; }
@@ -461,7 +462,7 @@
         </section>
         <section class="admin-table"><h2>お問い合わせ・パスワード変更依頼</h2>${summary.supportTickets.length ? `<div class="portal-list">${summary.supportTickets.map((ticket) => `<article class="portal-item"><h3>${escapeHtml(ticket.subject)} <span class="status-label">${ticket.status === 'open' ? '対応中' : ticket.status === 'answered' ? '返信あり' : '完了'}</span></h3><div class="portal-meta">${escapeHtml(ticket.organizer?.name || '削除済みアカウント')} ・ ${escapeHtml(ticket.organizer?.email || '')} ・ ${ticket.type === 'password' ? 'パスワード変更依頼' : 'お問い合わせ'} ・ ${new Date(ticket.updatedAt).toLocaleString('ja-JP')}</div>${ticket.messages.map((item) => `<div class="portal-message ${item.senderRole === 'admin' ? 'admin-message' : ''}"><strong>${item.senderRole === 'admin' ? '管理者' : '運営者'} ・ ${new Date(item.createdAt).toLocaleString('ja-JP')}</strong><br>${escapeHtml(item.body)}</div>`).join('')}<form class="admin-ticket-reply-form" data-ticket-id="${ticket.id}"><div class="field"><label>返信</label><textarea name="message" required maxlength="3000"></textarea></div><div class="portal-actions"><button class="secondary" type="submit">返信する</button><select data-ticket-status="${ticket.id}" aria-label="対応状況"><option value="open" ${ticket.status === 'open' ? 'selected' : ''}>対応中</option><option value="answered" ${ticket.status === 'answered' ? 'selected' : ''}>返信あり</option><option value="closed" ${ticket.status === 'closed' ? 'selected' : ''}>完了</option></select><button class="secondary" type="button" data-save-ticket-status="${ticket.id}">状況を保存</button>${ticket.type === 'password' && ticket.organizer ? `<button class="danger" type="button" data-reset-password="${ticket.organizer.id}" data-organizer-name="${escapeHtml(ticket.organizer.name)}" data-organizer-email="${escapeHtml(ticket.organizer.email)}">一時パスワードを発行</button>` : ''}</div></form></article>`).join('')}</div>` : '<div class="empty">お問い合わせはまだありません。</div>'}</section>
         <section class="admin-table"><h2>運営者アカウント</h2>${summary.organizers.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>主催大会</th><th>共同参加</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.organizers.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}</td><td data-label="主催大会">${item.ownedRaceCount}</td><td data-label="共同参加">${item.collaborationCount}</td><td data-label="登録日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="操作"><button class="secondary" data-reset-password="${item.id}" data-organizer-name="${escapeHtml(item.name)}" data-organizer-email="${escapeHtml(item.email)}">一時PW発行</button> <button class="danger" data-delete-organizer="${item.id}" data-organizer-name="${escapeHtml(item.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">運営者はまだ登録されていません。</div>'}</section>
-        <section class="admin-table"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="大会"><a href="${pageUrl(`/r/${encodeURIComponent(item.id)}`)}">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>`;
+        <section class="admin-table"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>速報URL</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td class="race-url" data-label="速報URL"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">${escapeHtml(new URL(pageUrl(item.publicPath), location.origin).href)}</a><br><button class="secondary" type="button" data-copy-race-url="${item.id}">URLをコピー</button></td><td data-label="大会"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>`;
       animatePage(animate);
       document.querySelector('#logout-button').addEventListener('click', logout);
       document.querySelector('#announcement-form').addEventListener('submit', submitAnnouncement);
@@ -482,6 +483,20 @@
       document.querySelectorAll('[data-delete-race]').forEach((button) => {
         button.addEventListener('click', () => deleteAdminItem('races', button.dataset.deleteRace, button.dataset.raceTitle));
       });
+      document.querySelectorAll('[data-copy-race-url]').forEach((button) => {
+        button.addEventListener('click', () => copyRaceUrl(button.dataset.copyRaceUrl, button));
+      });
+    }
+
+    async function copyRaceUrl(raceId, button) {
+      const url = new URL(pageUrl(`/r/${encodeURIComponent(raceId)}`), location.origin).href;
+      try {
+        await navigator.clipboard.writeText(url);
+        button.textContent = 'コピーしました';
+        setTimeout(() => { button.textContent = 'URLをコピー'; }, 1800);
+      } catch {
+        window.prompt('このURLを共有してください', url);
+      }
     }
 
     async function refreshAdmin() {

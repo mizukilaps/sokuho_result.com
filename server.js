@@ -668,6 +668,7 @@ const server = http.createServer((request, response) => {
     const races = Object.values(readRaces());
     const raceSummaries = races.map((race) => ({
       id: race.id,
+      publicPath: `/r/${race.id}`,
       title: race.title,
       owner: accountLabel(accounts, race.ownerId),
       collaborators: groupDetails(race, accounts)?.members || [],
