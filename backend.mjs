@@ -1,5 +1,6 @@
 const SESSION_LIFETIME = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_ITERATIONS = 120000;
+const DEFAULT_MAINTENANCE_MESSAGE = 'メンテナンス中です。復旧までしばらくお待ちください。';
 const encoder = new TextEncoder();
 let adminReady = false;
 let adminInitialization;
@@ -24,6 +25,16 @@ function jsonResponse(result) {
 
 async function loadState(env) {
   return env.DB.load();
+}
+
+function maintenanceStatus(state) {
+  const settings = state.maintenance || {};
+  return {
+    enabled: settings.enabled === true,
+    message: typeof settings.message === 'string' && settings.message.trim()
+      ? settings.message.trim()
+      : DEFAULT_MAINTENANCE_MESSAGE,
+  };
 }
 
 async function transact(env, operation) {
@@ -246,10 +257,25 @@ function statusForUser(user) {
   return user ? 403 : 401;
 }
 
-async function routeApi(request, env, url, user, tokenHash) {
+async function routeApi(request, env, url, user, tokenHash, initialState) {
   const { pathname } = url;
 
+  if (pathname === '/api/maintenance' && request.method === 'GET') {
+    return reply(200, maintenanceStatus(initialState));
+  }
+
   if (pathname === '/api/auth/me' && request.method === 'GET') return reply(200, { user });
+  const maintenance = maintenanceStatus(initialState);
+  const publicRaceRead = request.method === 'GET'
+    && /^\/api\/races\/[A-Za-z0-9_-]{12}(?:\/(?:snapshot|stream))?$/.test(pathname);
+  const allowedDuringMaintenance = ['/api/auth/me', '/api/auth/login', '/api/auth/logout', '/api/time'].includes(pathname)
+    || publicRaceRead;
+  if (maintenance.enabled && (
+    (pathname === '/api/auth/register' && request.method === 'POST')
+    || (user?.role === 'organizer' && !allowedDuringMaintenance)
+  )) {
+    return reply(503, { error: maintenance.message, maintenance: true });
+  }
   if (user?.mustChangePassword && !['/api/auth/me', '/api/auth/logout', '/api/auth/password/change'].includes(pathname)) {
     return reply(403, { error: '一時パスワードを変更してからご利用ください' });
   }
@@ -495,6 +521,22 @@ async function routeApi(request, env, url, user, tokenHash) {
         .map((item) => ({ ...item, important: Boolean(item.important) }))
         .sort((left, right) => right.createdAt - left.createdAt),
       venues: state.venues || [],
+      maintenance: maintenanceStatus(state),
+    });
+  }
+
+  if (pathname === '/api/admin/maintenance' && request.method === 'POST') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    if (typeof body?.enabled !== 'boolean') return reply(400, { error: 'メンテナンス状態を指定してください' });
+    const message = typeof body.message === 'string' && body.message.trim()
+      ? body.message.trim().slice(0, 500)
+      : DEFAULT_MAINTENANCE_MESSAGE;
+    return transact(env, (state) => {
+      state.maintenance = { enabled: body.enabled, message };
+      const updated = reply(200, { maintenance: maintenanceStatus(state) });
+      updated.changed = true;
+      return updated;
     });
   }
 
@@ -674,7 +716,7 @@ async function routeApi(request, env, url, user, tokenHash) {
   if (!race) return reply(404, { error: '大会が見つかりません' });
 
   if (action === 'snapshot' && request.method === 'GET') {
-    const canManage = canManageRace(user, race);
+    const canManage = !maintenanceStatus(state).enabled && canManageRace(user, race);
     return reply(200, {
       race: publicRace(race),
       access: {
@@ -939,7 +981,7 @@ export default {
         const tokenHash = token ? await digest(token) : null;
         const { state } = await loadState(env);
         const user = currentUser(state, tokenHash);
-        return jsonResponse(await routeApi(request, env, url, user, tokenHash));
+        return jsonResponse(await routeApi(request, env, url, user, tokenHash, state));
       }
       return serveAsset(request, env, url.pathname);
     } catch (error) {

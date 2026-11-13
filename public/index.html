@@ -121,8 +121,23 @@
     .dashboard-heading .intro-copy { margin: 8px 0 0; }
     .dashboard-list { margin-top: 28px; }
     .dashboard-list h2, .admin-table h2 { font-size: 17px; }
+    .admin-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; align-items: start; }
+    .admin-sidebar { position: sticky; top: 20px; max-height: calc(100vh - 40px); overflow-y: auto; padding: 16px 12px; border: 1px solid var(--line); background: white; }
+    .admin-sidebar h2 { margin: 0 0 10px; font-size: 14px; }
+    .admin-sidebar nav { display: grid; gap: 4px; }
+    .admin-sidebar a { display: block; padding: 9px 10px; color: var(--forest); font-size: 12px; font-weight: 700; text-decoration: none; }
+    .admin-sidebar a:hover, .admin-sidebar a:focus-visible { background: var(--canvas); outline-color: var(--forest); }
+    .admin-content { min-width: 0; }
+    .admin-content [id] { scroll-margin-top: 20px; }
     .admin-stats { display: flex; gap: 28px; margin: 20px 0; padding: 18px; border-block: 1px solid var(--line); }
     .admin-table { margin-top: 28px; }
+    .maintenance-notice { padding: clamp(24px, 5vw, 48px); border: 1px solid #d5cde0; border-top: 5px solid var(--forest); background: white; }
+    .maintenance-notice h1 { font-size: clamp(24px, 5vw, 34px); }
+    .maintenance-notice p { line-height: 1.8; white-space: pre-wrap; }
+    .maintenance-detail { color: var(--muted); font-size: 13px; }
+    .maintenance-banner { margin-bottom: 16px; padding: 14px 18px; border: 1px solid #d5cde0; border-left: 5px solid var(--forest); background: white; }
+    .maintenance-banner strong { display: block; margin-bottom: 5px; }
+    .maintenance-banner p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
     .portal-list { display: grid; gap: 12px; margin-top: 14px; }
     .portal-item { padding: 16px; border: 1px solid var(--line); background: white; }
     .portal-item.important-item { border: 1px solid #e6a1b2; border-left: 5px solid #d83362; background: #fff1f4; }
@@ -198,6 +213,11 @@
       .start-bar { align-items: stretch; flex-direction: column; }.start-button { width: 100%; }
       .dashboard-heading { align-items: start; flex-direction: column; }.dashboard-heading .intro-copy { margin-top: 4px; }
       .admin-stats { justify-content: space-between; gap: 10px; padding-inline: 8px; }
+      .admin-layout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+      .admin-sidebar { position: static; max-height: none; padding: 10px; }
+      .admin-sidebar h2 { margin: 0 0 6px; }
+      .admin-sidebar nav { grid-auto-columns: max-content; grid-auto-flow: column; grid-template-columns: none; overflow-x: auto; }
+      .admin-sidebar a { padding: 9px 11px; white-space: nowrap; }
       .group-panel { padding: 15px; }
       .group-panel-head { flex-direction: column; }
       .group-invite-form { align-items: stretch; flex-direction: column; }
@@ -306,6 +326,8 @@
     let clockOffset = 0;
     let racePollTimer = null;
     let routeToken = 0;
+    let maintenanceActive = false;
+    let maintenanceMessage = '';
     let currentUser = null;
     let raceAccess = { canManage: false, isOwner: false, isCollaborator: false };
     let currentGroup = null;
@@ -429,6 +451,8 @@
     }
 
     function renderOrganizer(races, portal, animate = false) {
+      app.dataset.maintenanceNotice = 'false';
+      maintenanceActive = false;
       app.innerHTML = `
         <section class="intro dashboard-heading"><div><div class="eyebrow">運営者ページ</div><h1>${escapeHtml(currentUser.name)} さん</h1><p class="intro-copy">大会の作成と速報記録を管理します。</p></div><button class="secondary" id="logout-button">ログアウト</button></section>
         <section class="admin-table"><h2>アップデートのお知らせ</h2>${portal.announcements.length ? `<div class="portal-list">${portal.announcements.map((item) => `<article class="portal-item ${item.important ? 'important-item' : ''}"><h3>${escapeHtml(item.title)}${item.important ? '<span class="important-label">重要</span>' : ''}</h3><div class="portal-meta">${new Date(item.createdAt).toLocaleString('ja-JP')} ・ ${item.seen ? '確認済み' : '未確認'}</div><p>${escapeHtml(item.message)}</p>${item.seen ? '' : `<button class="secondary" data-read-announcement="${item.id}">確認済みにする</button>`}</article>`).join('')}</div>` : '<div class="empty">お知らせはまだありません。</div>'}</section>
@@ -500,20 +524,25 @@
     }
 
     function renderAdmin(summary, animate = false) {
+      app.dataset.maintenanceNotice = 'false';
+      maintenanceActive = false;
       app.innerHTML = `
         <section class="intro dashboard-heading"><div><div class="eyebrow">DEVELOPER CONSOLE</div><h1>管理者ダッシュボード</h1><p class="intro-copy">ログイン中: ${escapeHtml(currentUser.email)}</p></div><button class="secondary" id="logout-button">ログアウト</button></section>
-        <div class="admin-stats"><div class="stat"><strong>${summary.organizerCount}</strong>運営者</div><div class="stat"><strong>${summary.raceCount}</strong>大会</div></div>
+        <div class="admin-layout"><aside class="admin-sidebar" aria-label="管理者メニュー"><h2>管理メニュー</h2><nav><a href="#admin-overview">概要</a><a href="#admin-maintenance">メンテナンス</a><a href="#admin-announcements">一斉お知らせ</a><a href="#admin-venues">会場</a><a href="#admin-support">お問い合わせ</a><a href="#admin-organizers">運営者</a><a href="#admin-races">大会</a><a href="#admin-audit">変更履歴</a></nav></aside><div class="admin-content">
+        <div class="admin-stats" id="admin-overview"><div class="stat"><strong>${summary.organizerCount}</strong>運営者</div><div class="stat"><strong>${summary.raceCount}</strong>大会</div></div>
         ${oneTimePassword ? `<section class="group-panel"><h2>一時パスワード（今回のみ表示）</h2><p>${escapeHtml(oneTimePassword.name)} ・ ${escapeHtml(oneTimePassword.email)}</p><p><strong>${escapeHtml(oneTimePassword.password)}</strong></p><p class="hint">このパスワードは保存されません。本人確認のうえ、安全な別経路で本人に伝えてください。本人はログイン後、新しいパスワードへの変更が必要です。</p><button class="secondary" id="dismiss-reset-password">表示を閉じる</button></section>` : ''}
-        <section class="admin-table"><h2>運営者への一斉お知らせ</h2><section class="group-panel"><form id="announcement-form"><div class="field"><label for="announcement-title">件名</label><input id="announcement-title" name="title" required maxlength="120"></div><div class="field"><label for="announcement-message">お知らせ内容</label><textarea id="announcement-message" name="message" required maxlength="3000"></textarea></div><label class="checkbox-field"><input name="important" type="checkbox">重要なお知らせとして扱う</label><p class="hint">重要にすると、運営者ページで赤ピンク色に強調し、未確認の間はログイン後にピックアップ表示します。</p><p class="error" id="announcement-error" role="alert"></p><button class="primary" type="submit">全運営者に掲載</button></form></section>
+        <section class="admin-table" id="admin-maintenance"><h2>メンテナンス設定</h2><section class="group-panel"><form id="maintenance-form"><label class="checkbox-field"><input name="enabled" type="checkbox" ${summary.maintenance.enabled ? 'checked' : ''}>メンテナンス中にする</label><div class="field"><label for="maintenance-message">運営者に表示する案内</label><textarea id="maintenance-message" name="message" maxlength="500" required>${escapeHtml(summary.maintenance.message)}</textarea></div><p class="hint">有効にすると運営者向けのデータ閲覧・編集・アカウント登録を停止し、案内を表示します。管理者機能と既存の公開速報の閲覧は継続します。この設定はアプリAPIの制御であり、Supabase Dashboard等からの直接アクセス権は変更しません。</p><p class="error" id="maintenance-error" role="alert"></p><button class="primary" type="submit">メンテナンス設定を保存</button></form></section></section>
+        <section class="admin-table" id="admin-announcements"><h2>運営者への一斉お知らせ</h2><section class="group-panel"><form id="announcement-form"><div class="field"><label for="announcement-title">件名</label><input id="announcement-title" name="title" required maxlength="120"></div><div class="field"><label for="announcement-message">お知らせ内容</label><textarea id="announcement-message" name="message" required maxlength="3000"></textarea></div><label class="checkbox-field"><input name="important" type="checkbox">重要なお知らせとして扱う</label><p class="hint">重要にすると、運営者ページで赤ピンク色に強調し、未確認の間はログイン後にピックアップ表示します。</p><p class="error" id="announcement-error" role="alert"></p><button class="primary" type="submit">全運営者に掲載</button></form></section>
           ${summary.announcements.length ? `<div class="portal-list">${summary.announcements.map((item) => `<article class="portal-item ${item.important ? 'important-item' : ''}"><h3>${escapeHtml(item.title)}${item.important ? '<span class="important-label">重要</span>' : ''}</h3><div class="portal-meta">${new Date(item.createdAt).toLocaleString('ja-JP')} ・ 確認 ${item.seenBy.length}/${summary.organizerCount}名</div><p>${escapeHtml(item.message)}</p></article>`).join('')}</div>` : ''}
         </section>
-        <section class="admin-table"><h2>会場の一斉登録</h2><section class="group-panel"><form id="venue-form"><div class="field-grid"><div class="field"><label for="venue-type">会場区分</label><select id="venue-type" name="type"><option value="domestic">国内</option><option value="international">海外</option></select></div><div class="field"><label for="venue-location" id="venue-location-label">都道府県</label><input id="venue-location" name="location" required maxlength="100" placeholder="例：東京都"></div></div><div class="field"><label for="venue-name">会場名</label><input id="venue-name" name="name" required maxlength="100" placeholder="例：国立競技場"></div><p class="hint">会場を1件ずつ登録できます。登録後、運営者の大会作成フォームに入力候補として表示されます。</p><p class="error" id="venue-error" role="alert"></p><button class="primary" type="submit">会場を登録</button></form></section>${summary.venues.length ? `<div class="table-wrap"><table><thead><tr><th>区分</th><th>都道府県・国・地域</th><th>会場名</th><th>操作</th></tr></thead><tbody>${summary.venues.map((venue) => `<tr><td data-label="区分">${venue.type === 'domestic' ? '国内' : '海外'}</td><td data-label="都道府県・国・地域">${escapeHtml(venue.location)}</td><td class="athlete-name" data-label="会場名">${escapeHtml(venue.name)}</td><td data-label="操作"><button class="danger" data-delete-venue="${venue.id}" data-venue-name="${escapeHtml(venue.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">登録済みの会場はありません。</div>'}</section>
-        <section class="admin-table"><h2>お問い合わせ・パスワード変更依頼</h2>${summary.supportTickets.length ? `<div class="portal-list">${summary.supportTickets.map((ticket) => `<article class="portal-item"><h3>${escapeHtml(ticket.subject)} <span class="status-label">${ticket.status === 'open' ? '対応中' : ticket.status === 'answered' ? '返信あり' : '完了'}</span></h3><div class="portal-meta">${escapeHtml(ticket.organizer?.name || '削除済みアカウント')} ・ ${escapeHtml(ticket.organizer?.email || '')} ・ ${ticket.type === 'password' ? 'パスワード変更依頼' : 'お問い合わせ'} ・ ${new Date(ticket.updatedAt).toLocaleString('ja-JP')}</div>${ticket.messages.map((item) => `<div class="portal-message ${item.senderRole === 'admin' ? 'admin-message' : ''}"><strong>${item.senderRole === 'admin' ? '管理者' : '運営者'} ・ ${new Date(item.createdAt).toLocaleString('ja-JP')}</strong><br>${escapeHtml(item.body)}</div>`).join('')}<form class="admin-ticket-reply-form" data-ticket-id="${ticket.id}"><div class="field"><label>返信</label><textarea name="message" required maxlength="3000"></textarea></div><div class="portal-actions"><button class="secondary" type="submit">返信する</button><select data-ticket-status="${ticket.id}" aria-label="対応状況"><option value="open" ${ticket.status === 'open' ? 'selected' : ''}>対応中</option><option value="answered" ${ticket.status === 'answered' ? 'selected' : ''}>返信あり</option><option value="closed" ${ticket.status === 'closed' ? 'selected' : ''}>完了</option></select><button class="secondary" type="button" data-save-ticket-status="${ticket.id}">状況を保存</button>${ticket.type === 'password' && ticket.organizer ? `<button class="danger" type="button" data-reset-password="${ticket.organizer.id}" data-organizer-name="${escapeHtml(ticket.organizer.name)}" data-organizer-email="${escapeHtml(ticket.organizer.email)}">一時パスワードを発行</button>` : ''}</div></form></article>`).join('')}</div>` : '<div class="empty">お問い合わせはまだありません。</div>'}</section>
-        <section class="admin-table"><h2>運営者アカウント</h2>${summary.organizers.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>主催大会</th><th>共同参加</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.organizers.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}</td><td data-label="主催大会">${item.ownedRaceCount}</td><td data-label="共同参加">${item.collaborationCount}</td><td data-label="登録日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="操作"><button class="secondary" data-reset-password="${item.id}" data-organizer-name="${escapeHtml(item.name)}" data-organizer-email="${escapeHtml(item.email)}">一時PW発行</button> <button class="danger" data-delete-organizer="${item.id}" data-organizer-name="${escapeHtml(item.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">運営者はまだ登録されていません。</div>'}</section>
-        <section class="admin-table"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>速報URL</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td class="race-url" data-label="速報URL"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">${escapeHtml(new URL(pageUrl(item.publicPath), location.origin).href)}</a><br><button class="secondary" type="button" data-copy-race-url="${item.id}">URLをコピー</button></td><td data-label="大会"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>
-        <section class="admin-table"><h2>競技情報の変更履歴</h2>${summary.auditLog.length ? `<div class="portal-list">${summary.auditLog.map((entry) => `<article class="audit-entry"><h3>${entry.action === 'event_order_changed' ? '競技順を変更' : '競技・選手・記録を編集'}</h3><div class="portal-meta">${escapeHtml(entry.raceTitle || '大会')} ・ ${escapeHtml(entry.actor?.name || '削除済み運営者')} ・ ${new Date(entry.createdAt).toLocaleString('ja-JP')}</div><details><summary>変更前・変更後を表示</summary><strong>変更前</strong><pre>${escapeHtml(auditSnapshotSummary(entry.before))}</pre><strong>変更後</strong><pre>${escapeHtml(auditSnapshotSummary(entry.after))}</pre></details></article>`).join('')}</div>` : '<div class="empty">競技情報の変更履歴はまだありません。</div>'}</section>`;
+        <section class="admin-table" id="admin-venues"><h2>会場の一斉登録</h2><section class="group-panel"><form id="venue-form"><div class="field-grid"><div class="field"><label for="venue-type">会場区分</label><select id="venue-type" name="type"><option value="domestic">国内</option><option value="international">海外</option></select></div><div class="field"><label for="venue-location" id="venue-location-label">都道府県</label><input id="venue-location" name="location" required maxlength="100" placeholder="例：東京都"></div></div><div class="field"><label for="venue-name">会場名</label><input id="venue-name" name="name" required maxlength="100" placeholder="例：国立競技場"></div><p class="hint">会場を1件ずつ登録できます。登録後、運営者の大会作成フォームに入力候補として表示されます。</p><p class="error" id="venue-error" role="alert"></p><button class="primary" type="submit">会場を登録</button></form></section>${summary.venues.length ? `<div class="table-wrap"><table><thead><tr><th>区分</th><th>都道府県・国・地域</th><th>会場名</th><th>操作</th></tr></thead><tbody>${summary.venues.map((venue) => `<tr><td data-label="区分">${venue.type === 'domestic' ? '国内' : '海外'}</td><td data-label="都道府県・国・地域">${escapeHtml(venue.location)}</td><td class="athlete-name" data-label="会場名">${escapeHtml(venue.name)}</td><td data-label="操作"><button class="danger" data-delete-venue="${venue.id}" data-venue-name="${escapeHtml(venue.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">登録済みの会場はありません。</div>'}</section>
+        <section class="admin-table" id="admin-support"><h2>お問い合わせ・パスワード変更依頼</h2>${summary.supportTickets.length ? `<div class="portal-list">${summary.supportTickets.map((ticket) => `<article class="portal-item"><h3>${escapeHtml(ticket.subject)} <span class="status-label">${ticket.status === 'open' ? '対応中' : ticket.status === 'answered' ? '返信あり' : '完了'}</span></h3><div class="portal-meta">${escapeHtml(ticket.organizer?.name || '削除済みアカウント')} ・ ${escapeHtml(ticket.organizer?.email || '')} ・ ${ticket.type === 'password' ? 'パスワード変更依頼' : 'お問い合わせ'} ・ ${new Date(ticket.updatedAt).toLocaleString('ja-JP')}</div>${ticket.messages.map((item) => `<div class="portal-message ${item.senderRole === 'admin' ? 'admin-message' : ''}"><strong>${item.senderRole === 'admin' ? '管理者' : '運営者'} ・ ${new Date(item.createdAt).toLocaleString('ja-JP')}</strong><br>${escapeHtml(item.body)}</div>`).join('')}<form class="admin-ticket-reply-form" data-ticket-id="${ticket.id}"><div class="field"><label>返信</label><textarea name="message" required maxlength="3000"></textarea></div><div class="portal-actions"><button class="secondary" type="submit">返信する</button><select data-ticket-status="${ticket.id}" aria-label="対応状況"><option value="open" ${ticket.status === 'open' ? 'selected' : ''}>対応中</option><option value="answered" ${ticket.status === 'answered' ? 'selected' : ''}>返信あり</option><option value="closed" ${ticket.status === 'closed' ? 'selected' : ''}>完了</option></select><button class="secondary" type="button" data-save-ticket-status="${ticket.id}">状況を保存</button>${ticket.type === 'password' && ticket.organizer ? `<button class="danger" type="button" data-reset-password="${ticket.organizer.id}" data-organizer-name="${escapeHtml(ticket.organizer.name)}" data-organizer-email="${escapeHtml(ticket.organizer.email)}">一時パスワードを発行</button>` : ''}</div></form></article>`).join('')}</div>` : '<div class="empty">お問い合わせはまだありません。</div>'}</section>
+        <section class="admin-table" id="admin-organizers"><h2>運営者アカウント</h2>${summary.organizers.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>主催大会</th><th>共同参加</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.organizers.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}</td><td data-label="主催大会">${item.ownedRaceCount}</td><td data-label="共同参加">${item.collaborationCount}</td><td data-label="登録日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="操作"><button class="secondary" data-reset-password="${item.id}" data-organizer-name="${escapeHtml(item.name)}" data-organizer-email="${escapeHtml(item.email)}">一時PW発行</button> <button class="danger" data-delete-organizer="${item.id}" data-organizer-name="${escapeHtml(item.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">運営者はまだ登録されていません。</div>'}</section>
+        <section class="admin-table" id="admin-races"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>速報URL</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td class="race-url" data-label="速報URL"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">${escapeHtml(new URL(pageUrl(item.publicPath), location.origin).href)}</a><br><button class="secondary" type="button" data-copy-race-url="${item.id}">URLをコピー</button></td><td data-label="大会"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>
+        <section class="admin-table" id="admin-audit"><h2>競技情報の変更履歴</h2>${summary.auditLog.length ? `<div class="portal-list">${summary.auditLog.map((entry) => `<article class="audit-entry"><h3>${entry.action === 'event_order_changed' ? '競技順を変更' : '競技・選手・記録を編集'}</h3><div class="portal-meta">${escapeHtml(entry.raceTitle || '大会')} ・ ${escapeHtml(entry.actor?.name || '削除済み運営者')} ・ ${new Date(entry.createdAt).toLocaleString('ja-JP')}</div><details><summary>変更前・変更後を表示</summary><strong>変更前</strong><pre>${escapeHtml(auditSnapshotSummary(entry.before))}</pre><strong>変更後</strong><pre>${escapeHtml(auditSnapshotSummary(entry.after))}</pre></details></article>`).join('')}</div>` : '<div class="empty">競技情報の変更履歴はまだありません。</div>'}</section></div></div>`;
       animatePage(animate);
       document.querySelector('#logout-button').addEventListener('click', logout);
+      document.querySelector('#maintenance-form').addEventListener('submit', submitMaintenance);
       document.querySelector('#announcement-form').addEventListener('submit', submitAnnouncement);
       document.querySelector('#venue-form').addEventListener('submit', submitVenue);
       document.querySelector('#venue-type').addEventListener('change', updateVenueLocationLabel);
@@ -572,6 +601,23 @@
         await refreshAdmin();
       } catch (failure) {
         document.querySelector('#announcement-error').textContent = failure.message;
+      }
+    }
+
+    async function submitMaintenance(event) {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      try {
+        await request('/api/admin/maintenance', {
+          method: 'POST',
+          body: JSON.stringify({
+            enabled: form.get('enabled') === 'on',
+            message: form.get('message'),
+          }),
+        });
+        await refreshAdmin();
+      } catch (failure) {
+        document.querySelector('#maintenance-error').textContent = failure.message;
       }
     }
 
@@ -763,6 +809,22 @@
       });
     }
 
+    function renderMaintenanceNotice(message, animate = false) {
+      maintenanceActive = true;
+      maintenanceMessage = message;
+      app.dataset.maintenanceNotice = 'true';
+      app.innerHTML = `
+        <section class="maintenance-notice">
+          <div class="eyebrow">MAINTENANCE</div>
+          <h1>メンテナンス中です</h1>
+          <p>${escapeHtml(message)}</p>
+          <p class="maintenance-detail">運営者向けの大会管理・データ閲覧と編集を一時停止しています。すでに公開されている速報ページは引き続き閲覧できます。再開までお待ちください。</p>
+          <button class="secondary" id="maintenance-logout">ログアウト</button>
+        </section>`;
+      animatePage(animate);
+      document.querySelector('#maintenance-logout').addEventListener('click', logout);
+    }
+
     async function submitAuth(event) {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
@@ -812,6 +874,11 @@
         }
         if (!currentUser) {
           renderAuth(routePath() === '/admin' ? 'admin' : 'login', animate);
+          return;
+        }
+        const maintenance = await request('/api/maintenance');
+        if (currentUser.role === 'organizer' && maintenance.enabled) {
+          renderMaintenanceNotice(maintenance.message, animate);
           return;
         }
         if (currentUser.role === 'organizer' && currentUser.mustChangePassword) {
@@ -931,6 +998,7 @@
       }).join('');
 
       app.innerHTML = `
+        ${maintenanceActive ? `<section class="maintenance-banner"><strong>メンテナンス中です</strong><p>${escapeHtml(maintenanceMessage)}</p><p>公開速報は閲覧できます。運営者向けの操作は停止中です。</p></section>` : ''}
         <section class="race-head">
           <div class="race-heading"><div><div class="eyebrow">大会速報</div><h1>${escapeHtml(race.title)}</h1><div class="race-meta"><span>${escapeHtml(race.date || '開催日未設定')}</span><span>${escapeHtml(race.venue || '会場未設定')}</span>${canManage ? '' : '<span class="viewer-badge">閲覧専用</span>'}</div></div><div class="head-actions">${canManage ? '<button class="secondary" id="dashboard-button">運営者ページ</button>' : ''}<button class="secondary" id="share-button">共有URLをコピー</button></div></div>
           <div class="stats"><div class="stat"><strong>${race.events.length}</strong>競技</div><div class="stat"><strong>${event ? selectedAthletes.length : 0}</strong>出走</div><div class="stat"><strong>${finishedCount}</strong>記録</div></div>
@@ -1165,6 +1233,9 @@
         const auth = await request('/api/auth/me');
         if (currentRouteToken !== routeToken) return;
         currentUser = auth.user;
+        const maintenance = await request('/api/maintenance');
+        maintenanceActive = currentUser?.role === 'organizer' && maintenance.enabled;
+        maintenanceMessage = maintenance.message;
         await syncClock();
         const snapshot = await request(`/api/races/${encodeURIComponent(id)}/snapshot`);
         if (currentRouteToken !== routeToken) return;
@@ -1182,15 +1253,22 @@
 
     async function pollRace(id, currentRouteToken) {
       try {
-        const snapshot = await request(`/api/races/${encodeURIComponent(id)}/snapshot`);
+        const [snapshot, maintenance] = await Promise.all([
+          request(`/api/races/${encodeURIComponent(id)}/snapshot`),
+          request('/api/maintenance'),
+        ]);
         if (currentRouteToken !== routeToken) return;
+        const maintenanceChanged = maintenanceActive !== (currentUser?.role === 'organizer' && maintenance.enabled)
+          || maintenanceMessage !== maintenance.message;
+        maintenanceActive = currentUser?.role === 'organizer' && maintenance.enabled;
+        maintenanceMessage = maintenance.message;
         const raceChanged = JSON.stringify(snapshot.race) !== JSON.stringify(race);
         const accessChanged = JSON.stringify(snapshot.access) !== JSON.stringify(raceAccess);
         const groupChanged = JSON.stringify(snapshot.group) !== JSON.stringify(currentGroup);
         race = snapshot.race;
         raceAccess = snapshot.access;
         currentGroup = snapshot.group;
-        if (raceChanged || accessChanged || groupChanged) {
+        if (raceChanged || accessChanged || groupChanged || maintenanceChanged) {
           if (!race.events.some((item) => item.id === selectedEventId)) selectedEventId = race.events[0]?.id || null;
           renderRace();
         }
@@ -1236,6 +1314,19 @@
     window.addEventListener('popstate', () => showCurrentRoute(true));
     showCurrentRoute();
     setInterval(() => { syncClock().catch(() => {}); }, 300000);
+    setInterval(async () => {
+      if (currentUser?.role !== 'organizer' || (routePath() !== '/' && app.dataset.maintenanceNotice !== 'true')) return;
+      try {
+        const maintenance = await request('/api/maintenance');
+        if (maintenance.enabled && app.dataset.maintenanceNotice !== 'true') {
+          renderMaintenanceNotice(maintenance.message, true);
+        } else if (!maintenance.enabled && app.dataset.maintenanceNotice === 'true') {
+          await showHome(true);
+        }
+      } catch (failure) {
+        console.error('メンテナンス状態を確認できませんでした', failure);
+      }
+    }, 15000);
   </script>
 </body>
 </html>

@@ -304,3 +304,81 @@ test('admins can manage domestic and international venue suggestions for organiz
   const summary = await json(await request('/api/admin/summary', undefined, adminSession));
   assert.deepEqual(summary.venues.map((venue) => venue.name), ['Example Stadium']);
 });
+
+test('maintenance blocks organizer APIs while preserving public race access and admin controls', async () => {
+  const { default: backend } = await import('./backend.mjs?maintenance-mode');
+  let version = 0;
+  let state = { races: {}, accounts: { users: [], sessions: {} } };
+  const DB = {
+    async load() {
+      return { version, state: structuredClone(state) };
+    },
+    async compareAndSwap(expectedVersion, nextState) {
+      if (expectedVersion !== version) return false;
+      state = structuredClone(nextState);
+      version += 1;
+      return true;
+    },
+  };
+  const env = { DB, ADMIN_EMAIL: 'admin@example.com', ADMIN_PASSWORD: 'admin-password-123' };
+  const request = async (path, body, session, method = body ? 'POST' : 'GET') => backend.fetch(new Request(`https://example.test${path}`, {
+    method,
+    headers: {
+      ...(body ? { 'content-type': 'application/json' } : {}),
+      ...(session ? { 'x-sokuho-session': session } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  }), env);
+  const json = async (response) => response.json();
+
+  await request('/api/auth/me');
+  const adminLogin = await request('/api/auth/login', {
+    email: env.ADMIN_EMAIL,
+    password: env.ADMIN_PASSWORD,
+  });
+  const adminSession = adminLogin.headers.get('x-sokuho-session');
+  const registration = await request('/api/auth/register', {
+    name: '運営者',
+    email: 'maintenance-organizer@example.com',
+    password: 'organizer-password-123',
+  });
+  const organizerSession = registration.headers.get('x-sokuho-session');
+  const createdRace = await request('/api/races', {
+    title: '公開中の大会',
+    date: '2026-11-13',
+  }, organizerSession);
+  const race = await json(createdRace);
+  assert.equal(createdRace.status, 201);
+
+  assert.equal((await request('/api/admin/maintenance', { enabled: true }, organizerSession)).status, 403);
+  const enable = await request('/api/admin/maintenance', {
+    enabled: true,
+    message: 'メンテナンス中です。復旧までお待ちください。',
+  }, adminSession);
+  assert.equal(enable.status, 200);
+  assert.deepEqual(await json(await request('/api/maintenance')), {
+    enabled: true,
+    message: 'メンテナンス中です。復旧までお待ちください。',
+  });
+  assert.equal((await request('/api/organizer/portal', undefined, organizerSession)).status, 503);
+  assert.equal((await request('/api/races', undefined, organizerSession)).status, 503);
+  assert.equal((await request('/api/races', { title: '停止中の大会' }, organizerSession)).status, 503);
+  assert.equal((await request(`/api/races/${race.id}/events`, { name: '男子100m', athletes: [{ name: '選手' }] }, organizerSession)).status, 503);
+  assert.equal((await request('/api/auth/register', {
+    name: '別の運営者',
+    email: 'blocked-organizer@example.com',
+    password: 'organizer-password-123',
+  })).status, 503);
+
+  const publicRace = await json(await request(`/api/races/${race.id}`));
+  assert.equal(publicRace.id, race.id);
+  const publicSnapshot = await json(await request(`/api/races/${race.id}/snapshot`, undefined, organizerSession));
+  assert.deepEqual(publicSnapshot.access, { canManage: false, isOwner: true, isCollaborator: false });
+  assert.equal(publicSnapshot.group, null);
+  assert.equal((await request('/api/admin/summary', undefined, adminSession)).status, 200);
+
+  const disable = await request('/api/admin/maintenance', { enabled: false, message: '作業中です' }, adminSession);
+  assert.equal(disable.status, 200);
+  assert.equal((await json(await request('/api/maintenance'))).enabled, false);
+  assert.equal((await request('/api/races', undefined, organizerSession)).status, 200);
+});

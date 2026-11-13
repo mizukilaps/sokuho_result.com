@@ -10,6 +10,7 @@ const dataFile = path.join(dataDir, 'races.json');
 const accountsFile = path.join(dataDir, 'accounts.json');
 const clients = new Map();
 const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
+const defaultMaintenanceMessage = 'メンテナンス中です。復旧までしばらくお待ちください。';
 
 fs.mkdirSync(dataDir, { recursive: true });
 
@@ -35,11 +36,30 @@ function readAccounts() {
     accounts.announcements ||= [];
     accounts.auditLog ||= [];
     accounts.venues ||= [];
+    accounts.maintenance ||= { enabled: false, message: defaultMaintenanceMessage };
     return accounts;
   } catch (error) {
-    if (error.code === 'ENOENT') return { users: [], sessions: {}, supportTickets: [], announcements: [], auditLog: [], venues: [] };
+    if (error.code === 'ENOENT') return {
+      users: [],
+      sessions: {},
+      supportTickets: [],
+      announcements: [],
+      auditLog: [],
+      venues: [],
+      maintenance: { enabled: false, message: defaultMaintenanceMessage },
+    };
     throw error;
   }
+}
+
+function maintenanceSettings(accounts) {
+  const settings = accounts.maintenance || {};
+  return {
+    enabled: settings.enabled === true,
+    message: typeof settings.message === 'string' && settings.message.trim()
+      ? settings.message.trim()
+      : defaultMaintenanceMessage,
+  };
 }
 
 function saveAccounts(accounts) {
@@ -222,7 +242,7 @@ function closeDeletedRace(raceId) {
   clients.delete(raceId);
 }
 
-function routeRace(request, response, url, user) {
+function routeRace(request, response, url, user, maintenanceEnabled) {
   const [, , , raceId, action, subaction, memberId] = url.pathname.split('/');
   const races = readRaces();
   const race = races[raceId];
@@ -232,7 +252,7 @@ function routeRace(request, response, url, user) {
   }
 
   if (action === 'snapshot' && request.method === 'GET') {
-    const canManage = canManageRace(user, race);
+    const canManage = !maintenanceEnabled && canManageRace(user, race);
     sendJson(response, 200, {
       race: publicRace(race),
       access: {
@@ -554,6 +574,26 @@ function routeRace(request, response, url, user) {
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
   const user = currentUser(request);
+  if (url.pathname === '/api/maintenance' && request.method === 'GET') {
+    sendJson(response, 200, maintenanceSettings(readAccounts()));
+    return;
+  }
+  const maintenance = url.pathname.startsWith('/api/')
+    && (user?.role === 'organizer' || (url.pathname === '/api/auth/register' && request.method === 'POST'))
+    ? maintenanceSettings(readAccounts())
+    : { enabled: false, message: defaultMaintenanceMessage };
+  const publicRaceRead = request.method === 'GET'
+    && /^\/api\/races\/[A-Za-z0-9_-]{12}(?:\/(?:snapshot|stream))?$/.test(url.pathname);
+  const allowedDuringMaintenance = ['/api/auth/me', '/api/auth/login', '/api/auth/logout', '/api/time'].includes(url.pathname)
+    || publicRaceRead;
+  if (maintenance.enabled && (
+    (url.pathname === '/api/auth/register' && request.method === 'POST')
+    || (user?.role === 'organizer' && !allowedDuringMaintenance)
+  )) {
+    request.resume();
+    sendJson(response, 503, { error: maintenance.message, maintenance: true });
+    return;
+  }
   if (user?.mustChangePassword && !['/api/auth/me', '/api/auth/logout', '/api/auth/password/change'].includes(url.pathname)) {
     sendJson(response, 403, { error: '一時パスワードを変更してからご利用ください' });
     return;
@@ -809,7 +849,29 @@ const server = http.createServer((request, response) => {
         .map((item) => ({ ...item, important: Boolean(item.important) }))
         .sort((left, right) => right.createdAt - left.createdAt),
       venues: accounts.venues,
+      maintenance: maintenanceSettings(accounts),
     });
+    return;
+  }
+
+  if (url.pathname === '/api/admin/maintenance' && request.method === 'POST') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then((body) => {
+      if (typeof body?.enabled !== 'boolean') {
+        sendJson(response, 400, { error: 'メンテナンス状態を指定してください' });
+        return;
+      }
+      const message = typeof body.message === 'string' && body.message.trim()
+        ? body.message.trim().slice(0, 500)
+        : defaultMaintenanceMessage;
+      const accounts = readAccounts();
+      accounts.maintenance = { enabled: body.enabled, message };
+      saveAccounts(accounts);
+      sendJson(response, 200, { maintenance: maintenanceSettings(accounts) });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
     return;
   }
 
@@ -1032,7 +1094,7 @@ const server = http.createServer((request, response) => {
   }
 
   if (url.pathname.startsWith('/api/races/')) {
-    routeRace(request, response, url, user);
+    routeRace(request, response, url, user, maintenance.enabled);
     return;
   }
 
