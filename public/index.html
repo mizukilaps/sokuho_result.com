@@ -563,7 +563,7 @@
       maintenanceActive = false;
       app.innerHTML = `
         <section class="intro dashboard-heading"><div><div class="eyebrow">DEVELOPER CONSOLE</div><h1>管理者ダッシュボード</h1><p class="intro-copy">ログイン中: ${escapeHtml(currentUser.email)}</p></div><button class="secondary" id="logout-button">ログアウト</button></section>
-        <div class="admin-layout"><aside class="admin-sidebar" aria-label="管理者メニュー"><h2>管理メニュー</h2><nav><a href="#admin-overview">概要</a><a href="#admin-maintenance">メンテナンス</a><a href="#admin-announcements">一斉お知らせ</a><a href="#admin-venues">会場</a><a href="#admin-venue-requests">会場申請</a><a href="#admin-support">お問い合わせ</a><a href="#admin-organizers">運営者</a><a href="#admin-races">大会</a><a href="#admin-audit">変更履歴</a></nav></aside><div class="admin-content">
+        <div class="admin-layout"><aside class="admin-sidebar" aria-label="管理者メニュー"><h2>管理メニュー</h2><nav><a href="${pageUrl('/admin')}#admin-overview">概要</a><a href="${pageUrl('/admin')}#admin-maintenance">メンテナンス</a><a href="${pageUrl('/admin')}#admin-announcements">一斉お知らせ</a><a href="${pageUrl('/admin')}#admin-venues">会場</a><a href="${pageUrl('/admin')}#admin-venue-requests">会場申請</a><a href="${pageUrl('/admin')}#admin-support">お問い合わせ</a><a href="${pageUrl('/admin')}#admin-organizers">運営者</a><a href="${pageUrl('/admin')}#admin-races">大会</a><a href="${pageUrl('/admin')}#admin-audit">変更履歴</a></nav></aside><div class="admin-content">
         <div class="admin-stats" id="admin-overview"><div class="stat"><strong>${summary.organizerCount}</strong>運営者</div><div class="stat"><strong>${summary.raceCount}</strong>大会</div></div>
         ${oneTimePassword ? `<section class="group-panel"><h2>一時パスワード（今回のみ表示）</h2><p>${escapeHtml(oneTimePassword.name)} ・ ${escapeHtml(oneTimePassword.email)}</p><p><strong>${escapeHtml(oneTimePassword.password)}</strong></p><p class="hint">このパスワードは保存されません。本人確認のうえ、安全な別経路で本人に伝えてください。本人はログイン後、新しいパスワードへの変更が必要です。</p><button class="secondary" id="dismiss-reset-password">表示を閉じる</button></section>` : ''}
         <section class="admin-table" id="admin-maintenance"><h2>メンテナンス設定</h2><section class="group-panel"><form id="maintenance-form"><label class="checkbox-field"><input name="enabled" type="checkbox" ${summary.maintenance.enabled ? 'checked' : ''}>メンテナンス中にする</label><div class="field"><label for="maintenance-message">運営者に表示する案内</label><textarea id="maintenance-message" name="message" maxlength="500" required>${escapeHtml(summary.maintenance.message)}</textarea></div><p class="hint">有効にすると運営者向けのデータ閲覧・編集・アカウント登録を停止し、案内を表示します。管理者機能と既存の公開速報の閲覧は継続します。この設定はアプリAPIの制御であり、Supabase Dashboard等からの直接アクセス権は変更しません。</p><p class="error" id="maintenance-error" role="alert"></p><button class="primary" type="submit">メンテナンス設定を保存</button></form></section></section>
@@ -605,6 +605,29 @@
       document.querySelectorAll('[data-copy-race-url]').forEach((button) => {
         button.addEventListener('click', () => copyRaceUrl(button.dataset.copyRaceUrl, button));
       });
+      connectAdminSidebar();
+    }
+
+    function connectAdminSidebar() {
+      document.querySelectorAll('.admin-sidebar a').forEach((link) => {
+        link.addEventListener('click', (event) => {
+          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+          const target = document.getElementById(link.hash.slice(1));
+          if (!target) return;
+          event.preventDefault();
+          const nextUrl = `${pageUrl('/admin')}${link.hash}`;
+          if (`${location.pathname}${location.hash}` !== nextUrl) {
+            history.pushState({}, '', nextUrl);
+          }
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      });
+    }
+
+    function scrollToAdminSection() {
+      if (routePath() !== '/admin' || !location.hash) return;
+      document.getElementById(location.hash.slice(1))
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     async function copyRaceUrl(raceId, button) {
@@ -974,7 +997,10 @@
         if (currentUser.role === 'admin') {
           if (routePath() !== '/admin') history.replaceState({ role: 'admin' }, '', pageUrl('/admin'));
           const summary = await request('/api/admin/summary');
-          if (currentRouteToken === routeToken) renderAdmin(summary, animate);
+          if (currentRouteToken === routeToken) {
+            renderAdmin(summary, animate);
+            scrollToAdminSection();
+          }
           return;
         }
         if (routePath() === '/admin') history.replaceState({}, '', pageUrl('/'));
