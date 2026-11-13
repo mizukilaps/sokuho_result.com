@@ -237,7 +237,7 @@ test('organizers can request help and change a temporary password, while admins 
   assert.equal((await json(await request('/api/organizer/portal', undefined, temporarySession))).supportTickets[0].status, 'closed');
 });
 
-test('admins can manage domestic and international venue suggestions for organizers', async () => {
+test('admins can manage UN-member country venues and review organizer venue requests', async () => {
   const { default: backend } = await import('./backend.mjs?admin-venue-catalog');
   let version = 0;
   let state = { races: {}, accounts: { users: [], sessions: {} } };
@@ -276,33 +276,83 @@ test('admins can manage domestic and international venue suggestions for organiz
   });
   const organizerSession = registration.headers.get('x-sokuho-session');
 
-  assert.equal((await request('/api/admin/venues', { type: 'domestic', location: '東京都', name: '国立競技場' })).status, 401);
-  assert.equal((await request('/api/admin/venues', { type: 'domestic', location: '東京都', name: '国立競技場' }, organizerSession)).status, 403);
-  assert.equal((await request('/api/admin/venues', { type: 'unknown', location: '東京都', name: '国立競技場' }, adminSession)).status, 400);
+  assert.equal((await request('/api/admin/venues', { countryCode: 'JP', location: '東京都', name: '国立競技場' })).status, 401);
+  assert.equal((await request('/api/admin/venues', { countryCode: 'JP', location: '東京都', name: '国立競技場' }, organizerSession)).status, 403);
+  assert.equal((await request('/api/admin/venues', { countryCode: 'VA', location: '東京都', name: '国立競技場' }, adminSession)).status, 400);
 
   const domesticResponse = await request('/api/admin/venues', {
-    type: 'domestic',
+    countryCode: 'JP',
     location: '東京都',
     name: '国立競技場',
   }, adminSession);
   const domesticVenue = (await json(domesticResponse)).venue;
   assert.equal(domesticResponse.status, 201);
+  assert.equal(domesticVenue.countryCode, 'JP');
   const internationalResponse = await request('/api/admin/venues', {
-    type: 'international',
+    countryCode: 'US',
     location: 'アメリカ・カリフォルニア州',
     name: 'Example Stadium',
   }, adminSession);
   assert.equal(internationalResponse.status, 201);
 
   const portal = await json(await request('/api/organizer/portal', undefined, organizerSession));
-  assert.deepEqual(portal.venues.map(({ type, location, name }) => ({ type, location, name })), [
-    { type: 'domestic', location: '東京都', name: '国立競技場' },
-    { type: 'international', location: 'アメリカ・カリフォルニア州', name: 'Example Stadium' },
+  assert.equal(portal.countryCodes.length, 193);
+  assert.deepEqual(portal.venues.map(({ countryCode, location, name }) => ({ countryCode, location, name })), [
+    { countryCode: 'JP', location: '東京都', name: '国立競技場' },
+    { countryCode: 'US', location: 'アメリカ・カリフォルニア州', name: 'Example Stadium' },
   ]);
   assert.equal((await request(`/api/admin/venues/${domesticVenue.id}`, undefined, organizerSession, 'DELETE')).status, 403);
   assert.equal((await request(`/api/admin/venues/${domesticVenue.id}`, undefined, adminSession, 'DELETE')).status, 200);
+  const raceResponse = await request('/api/races', {
+    title: '申請テスト大会',
+    date: '2026-11-13',
+  }, organizerSession);
+  const race = await json(raceResponse);
+  assert.equal(raceResponse.status, 201);
+
+  const requestDetails = {
+    raceId: race.id,
+    countryCode: 'JP',
+    location: '大阪府大阪市',
+    name: '申請会場',
+    website: 'https://example.jp/venue',
+    reason: 'この大会の会場として利用予定のため登録を申請します。',
+  };
+  assert.equal((await request('/api/organizer/venue-requests', requestDetails)).status, 401);
+  assert.equal((await request('/api/organizer/venue-requests', { ...requestDetails, website: 'http://example.jp' }, organizerSession)).status, 400);
+  const venueRequestResponse = await request('/api/organizer/venue-requests', requestDetails, organizerSession);
+  const venueRequest = (await json(venueRequestResponse)).venueRequest;
+  assert.equal(venueRequestResponse.status, 201);
+  assert.equal(venueRequest.raceId, race.id);
+  assert.equal((await request('/api/organizer/venue-requests', requestDetails, organizerSession)).status, 409);
+
+  const adminSummary = await json(await request('/api/admin/summary', undefined, adminSession));
+  assert.equal(adminSummary.countryCodes.length, 193);
+  assert.equal(adminSummary.venueRequests[0].organizer.email, 'venue-organizer@example.com');
+  assert.equal(adminSummary.venueRequests[0].raceTitle, '申請テスト大会');
+  assert.equal((await request(`/api/admin/venue-requests/${venueRequest.id}`, { status: 'approved' }, organizerSession, 'PATCH')).status, 403);
+  assert.equal((await request(`/api/admin/venue-requests/${venueRequest.id}`, { status: 'approved' }, adminSession, 'PATCH')).status, 200);
+  assert.equal((await request(`/api/admin/venue-requests/${venueRequest.id}`, { status: 'approved' }, adminSession, 'PATCH')).status, 409);
+
+  const organizerPortal = await json(await request('/api/organizer/portal', undefined, organizerSession));
+  assert.equal(organizerPortal.venueRequests[0].status, 'approved');
   const summary = await json(await request('/api/admin/summary', undefined, adminSession));
-  assert.deepEqual(summary.venues.map((venue) => venue.name), ['Example Stadium']);
+  assert.deepEqual(summary.venues.map((venue) => venue.name), ['Example Stadium', '申請会場']);
+
+  const rejectedRequestResponse = await request('/api/organizer/venue-requests', {
+    ...requestDetails,
+    location: '北海道札幌市',
+    name: '却下テスト会場',
+  }, organizerSession);
+  const rejectedRequest = (await json(rejectedRequestResponse)).venueRequest;
+  assert.equal(rejectedRequestResponse.status, 201);
+  assert.equal((await request(`/api/admin/venue-requests/${rejectedRequest.id}`, {
+    status: 'rejected',
+  }, adminSession, 'PATCH')).status, 400);
+  assert.equal((await request(`/api/admin/venue-requests/${rejectedRequest.id}`, {
+    status: 'rejected',
+    adminNote: '公式情報を確認できませんでした。',
+  }, adminSession, 'PATCH')).status, 200);
 });
 
 test('maintenance blocks organizer APIs while preserving public race access and admin controls', async () => {

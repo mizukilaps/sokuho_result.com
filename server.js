@@ -9,8 +9,10 @@ const dataDir = path.join(__dirname, 'data');
 const dataFile = path.join(dataDir, 'races.json');
 const accountsFile = path.join(dataDir, 'accounts.json');
 const clients = new Map();
+const UN_MEMBER_COUNTRY_CODES = require('./un-member-country-codes.json');
 const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
 const defaultMaintenanceMessage = 'メンテナンス中です。復旧までしばらくお待ちください。';
+const countryDisplayNames = new Intl.DisplayNames(['ja'], { type: 'region' });
 
 fs.mkdirSync(dataDir, { recursive: true });
 
@@ -36,6 +38,7 @@ function readAccounts() {
     accounts.announcements ||= [];
     accounts.auditLog ||= [];
     accounts.venues ||= [];
+    accounts.venueRequests ||= [];
     accounts.maintenance ||= { enabled: false, message: defaultMaintenanceMessage };
     return accounts;
   } catch (error) {
@@ -46,10 +49,35 @@ function readAccounts() {
       announcements: [],
       auditLog: [],
       venues: [],
+      venueRequests: [],
       maintenance: { enabled: false, message: defaultMaintenanceMessage },
     };
     throw error;
   }
+}
+
+function venueCountryCode(venue) {
+  if (UN_MEMBER_COUNTRY_CODES.includes(venue.countryCode)) return venue.countryCode;
+  return venue.type === 'domestic' ? 'JP' : '';
+}
+
+function venueDetails(venue) {
+  const countryCode = venueCountryCode(venue);
+  return {
+    ...venue,
+    countryCode,
+    country: countryCode ? countryDisplayNames.of(countryCode) : '',
+  };
+}
+
+function normalizeVenuePart(value) {
+  return String(value || '').trim().normalize('NFKC').toLocaleLowerCase();
+}
+
+function matchesVenue(left, right) {
+  return venueCountryCode(left) === right.countryCode
+    && normalizeVenuePart(left.name) === normalizeVenuePart(right.name)
+    && normalizeVenuePart(left.location) === normalizeVenuePart(right.location);
 }
 
 function maintenanceSettings(accounts) {
@@ -723,8 +751,78 @@ const server = http.createServer((request, response) => {
       announcements: accounts.announcements
         .map((item) => ({ ...item, important: Boolean(item.important), seen: item.seenBy.includes(user.id) }))
         .sort((left, right) => right.createdAt - left.createdAt),
-      venues: accounts.venues,
+      venues: accounts.venues.map(venueDetails),
+      countryCodes: UN_MEMBER_COUNTRY_CODES,
+      venueRequests: accounts.venueRequests
+        .filter((item) => item.organizerId === user.id)
+        .sort((left, right) => right.updatedAt - left.updatedAt),
     });
+    return;
+  }
+
+  if (url.pathname === '/api/organizer/venue-requests' && request.method === 'POST') {
+    if (user?.role !== 'organizer') {
+      sendJson(response, user ? 403 : 401, { error: '運営者としてログインしてください' });
+      return;
+    }
+    readBody(request).then((body) => {
+      const countryCode = String(body?.countryCode || '').toUpperCase();
+      const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
+      const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 150) : '';
+      const website = typeof body?.website === 'string' ? body.website.trim().slice(0, 500) : '';
+      const reason = typeof body?.reason === 'string' ? body.reason.trim().slice(0, 2000) : '';
+      const raceId = typeof body?.raceId === 'string' ? body.raceId : '';
+      if (!UN_MEMBER_COUNTRY_CODES.includes(countryCode) || !name || !location || reason.length < 20) {
+        sendJson(response, 400, { error: '国、会場名、所在地、20文字以上の申請理由を入力してください' });
+        return;
+      }
+      let parsedWebsite;
+      try {
+        parsedWebsite = new URL(website);
+      } catch {
+        sendJson(response, 400, { error: '会場の公式情報URLを入力してください' });
+        return;
+      }
+      if (parsedWebsite.protocol !== 'https:' || !parsedWebsite.hostname || parsedWebsite.username || parsedWebsite.password) {
+        sendJson(response, 400, { error: '公式情報URLには認証情報のないHTTPSアドレスを入力してください' });
+        return;
+      }
+      const race = readRaces()[raceId];
+      if (!race || !canManageRace(user, race)) {
+        sendJson(response, 403, { error: '申請に紐づける担当大会を選択してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const venueIdentity = { countryCode, name, location };
+      if (accounts.venues.some((venue) => matchesVenue(venue, venueIdentity))) {
+        sendJson(response, 409, { error: 'この会場はすでに登録されています。大会作成フォームの候補から選択してください' });
+        return;
+      }
+      if (accounts.venueRequests.some((item) => item.status === 'pending' && matchesVenue(item, venueIdentity))) {
+        sendJson(response, 409, { error: '同じ会場の申請がすでに審査中です' });
+        return;
+      }
+      const now = Date.now();
+      const venueRequest = {
+        id: crypto.randomUUID(),
+        organizerId: user.id,
+        raceId,
+        raceTitle: race.title,
+        countryCode,
+        country: countryDisplayNames.of(countryCode),
+        name,
+        location,
+        website: parsedWebsite.href,
+        reason,
+        status: 'pending',
+        adminNote: '',
+        createdAt: now,
+        updatedAt: now,
+      };
+      accounts.venueRequests.push(venueRequest);
+      saveAccounts(accounts);
+      sendJson(response, 201, { venueRequest });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
     return;
   }
 
@@ -817,7 +915,8 @@ const server = http.createServer((request, response) => {
     }
     const accounts = readAccounts();
     const organizers = accounts.users.filter((item) => item.role === 'organizer');
-    const races = Object.values(readRaces());
+    const racesById = readRaces();
+    const races = Object.values(racesById);
     const raceSummaries = races.map((race) => ({
       id: race.id,
       publicPath: `/r/${race.id}`,
@@ -848,7 +947,15 @@ const server = http.createServer((request, response) => {
       announcements: accounts.announcements
         .map((item) => ({ ...item, important: Boolean(item.important) }))
         .sort((left, right) => right.createdAt - left.createdAt),
-      venues: accounts.venues,
+      venues: accounts.venues.map(venueDetails),
+      countryCodes: UN_MEMBER_COUNTRY_CODES,
+      venueRequests: accounts.venueRequests
+        .map((item) => ({
+          ...item,
+          organizer: accountLabel(accounts, item.organizerId),
+          raceTitle: racesById[item.raceId]?.title || item.raceTitle || '削除済み大会',
+        }))
+        .sort((left, right) => right.updatedAt - left.updatedAt),
       maintenance: maintenanceSettings(accounts),
     });
     return;
@@ -881,18 +988,80 @@ const server = http.createServer((request, response) => {
       return;
     }
     readBody(request).then((body) => {
-      const type = body?.type;
+      const countryCode = String(body?.countryCode || '').toUpperCase()
+        || (body?.type === 'domestic' ? 'JP' : '');
       const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
-      const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 100) : '';
-      if (!['domestic', 'international'].includes(type) || !name || !location) {
-        sendJson(response, 400, { error: '区分、会場名、都道府県または国・地域を入力してください' });
+      const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 150) : '';
+      if (!UN_MEMBER_COUNTRY_CODES.includes(countryCode) || !name) {
+        sendJson(response, 400, { error: '国連加盟国と会場名を指定してください' });
         return;
       }
       const accounts = readAccounts();
-      const venue = { id: crypto.randomUUID(), type, name, location, createdAt: Date.now() };
+      const venueIdentity = { countryCode, name, location };
+      if (accounts.venues.some((item) => matchesVenue(item, venueIdentity))) {
+        sendJson(response, 409, { error: '同じ国・所在地・会場名がすでに登録されています' });
+        return;
+      }
+      const venue = {
+        id: crypto.randomUUID(),
+        ...venueIdentity,
+        country: countryDisplayNames.of(countryCode),
+        createdAt: Date.now(),
+      };
       accounts.venues.push(venue);
       saveAccounts(accounts);
       sendJson(response, 201, { venue });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  const venueRequestMatch = url.pathname.match(/^\/api\/admin\/venue-requests\/([0-9a-f-]{36})$/i);
+  if (venueRequestMatch && request.method === 'PATCH') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then((body) => {
+      const status = body?.status;
+      const adminNote = typeof body?.adminNote === 'string' ? body.adminNote.trim().slice(0, 1000) : '';
+      if (!['approved', 'rejected'].includes(status)) {
+        sendJson(response, 400, { error: '審査結果を選択してください' });
+        return;
+      }
+      if (status === 'rejected' && !adminNote) {
+        sendJson(response, 400, { error: '却下理由を入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const venueRequest = accounts.venueRequests.find((item) => item.id === venueRequestMatch[1]);
+      if (!venueRequest) {
+        sendJson(response, 404, { error: '会場申請が見つかりません' });
+        return;
+      }
+      if (venueRequest.status !== 'pending') {
+        sendJson(response, 409, { error: 'この申請は審査済みです' });
+        return;
+      }
+      let venue = accounts.venues.find((item) => matchesVenue(item, venueRequest));
+      if (status === 'approved' && !venue) {
+        venue = {
+          id: crypto.randomUUID(),
+          countryCode: venueRequest.countryCode,
+          country: venueRequest.country,
+          location: venueRequest.location,
+          name: venueRequest.name,
+          createdAt: Date.now(),
+          sourceRequestId: venueRequest.id,
+        };
+        accounts.venues.push(venue);
+      }
+      venueRequest.status = status;
+      venueRequest.adminNote = adminNote;
+      venueRequest.reviewerId = user.id;
+      venueRequest.venueId = venue?.id || null;
+      venueRequest.updatedAt = Date.now();
+      saveAccounts(accounts);
+      sendJson(response, 200, { venueRequest, venue: venue || null });
     }).catch((error) => sendJson(response, 400, { error: error.message }));
     return;
   }

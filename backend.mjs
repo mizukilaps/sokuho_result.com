@@ -1,7 +1,10 @@
+import UN_MEMBER_COUNTRY_CODES from './un-member-country-codes.json' with { type: 'json' };
+
 const SESSION_LIFETIME = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_ITERATIONS = 120000;
 const DEFAULT_MAINTENANCE_MESSAGE = 'メンテナンス中です。復旧までしばらくお待ちください。';
 const encoder = new TextEncoder();
+const countryDisplayNames = new Intl.DisplayNames(['ja'], { type: 'region' });
 let adminReady = false;
 let adminInitialization;
 
@@ -35,6 +38,30 @@ function maintenanceStatus(state) {
       ? settings.message.trim()
       : DEFAULT_MAINTENANCE_MESSAGE,
   };
+}
+
+function venueCountryCode(venue) {
+  if (UN_MEMBER_COUNTRY_CODES.includes(venue.countryCode)) return venue.countryCode;
+  return venue.type === 'domestic' ? 'JP' : '';
+}
+
+function venueDetails(venue) {
+  const countryCode = venueCountryCode(venue);
+  return {
+    ...venue,
+    countryCode,
+    country: countryCode ? countryDisplayNames.of(countryCode) : '',
+  };
+}
+
+function normalizeVenuePart(value) {
+  return String(value || '').trim().normalize('NFKC').toLocaleLowerCase();
+}
+
+function matchesVenue(left, right) {
+  return venueCountryCode(left) === right.countryCode
+    && normalizeVenuePart(left.name) === normalizeVenuePart(right.name)
+    && normalizeVenuePart(left.location) === normalizeVenuePart(right.location);
 }
 
 async function transact(env, operation) {
@@ -410,7 +437,69 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
           seen: (item.seenBy || []).includes(user.id),
         }))
         .sort((left, right) => right.createdAt - left.createdAt),
-      venues: state.venues || [],
+      venues: (state.venues || []).map(venueDetails),
+      countryCodes: UN_MEMBER_COUNTRY_CODES,
+      venueRequests: (state.venueRequests || [])
+        .filter((item) => item.organizerId === user.id)
+        .sort((left, right) => right.updatedAt - left.updatedAt),
+    });
+  }
+
+  if (pathname === '/api/organizer/venue-requests' && request.method === 'POST') {
+    if (user?.role !== 'organizer') return reply(statusForUser(user), { error: '運営者としてログインしてください' });
+    const body = await requestBody(request);
+    const countryCode = String(body?.countryCode || '').toUpperCase();
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
+    const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 150) : '';
+    const website = typeof body?.website === 'string' ? body.website.trim().slice(0, 500) : '';
+    const reason = typeof body?.reason === 'string' ? body.reason.trim().slice(0, 2000) : '';
+    const raceId = typeof body?.raceId === 'string' ? body.raceId : '';
+    if (!UN_MEMBER_COUNTRY_CODES.includes(countryCode) || !name || !location || reason.length < 20) {
+      return reply(400, { error: '国、会場名、所在地、20文字以上の申請理由を入力してください' });
+    }
+    let parsedWebsite;
+    try {
+      parsedWebsite = new URL(website);
+    } catch {
+      return reply(400, { error: '会場の公式情報URLを入力してください' });
+    }
+    if (parsedWebsite.protocol !== 'https:' || !parsedWebsite.hostname || parsedWebsite.username || parsedWebsite.password) {
+      return reply(400, { error: '公式情報URLには認証情報のないHTTPSアドレスを入力してください' });
+    }
+    const country = countryDisplayNames.of(countryCode);
+    return transact(env, (state) => {
+      const race = state.races[raceId];
+      if (!race || !canManageRace(user, race)) return reply(403, { error: '申請に紐づける担当大会を選択してください' });
+      state.venues ||= [];
+      state.venueRequests ||= [];
+      const venueIdentity = { countryCode, name, location };
+      if (state.venues.some((venue) => matchesVenue(venue, venueIdentity))) {
+        return reply(409, { error: 'この会場はすでに登録されています。大会作成フォームの候補から選択してください' });
+      }
+      if (state.venueRequests.some((item) => item.status === 'pending' && matchesVenue(item, venueIdentity))) {
+        return reply(409, { error: '同じ会場の申請がすでに審査中です' });
+      }
+      const now = Date.now();
+      const venueRequest = {
+        id: crypto.randomUUID(),
+        organizerId: user.id,
+        raceId,
+        raceTitle: race.title,
+        countryCode,
+        country,
+        name,
+        location,
+        website: parsedWebsite.href,
+        reason,
+        status: 'pending',
+        adminNote: '',
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.venueRequests.push(venueRequest);
+      const created = reply(201, { venueRequest });
+      created.changed = true;
+      return created;
     });
   }
 
@@ -520,7 +609,15 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
       announcements: (state.announcements || [])
         .map((item) => ({ ...item, important: Boolean(item.important) }))
         .sort((left, right) => right.createdAt - left.createdAt),
-      venues: state.venues || [],
+      venues: (state.venues || []).map(venueDetails),
+      countryCodes: UN_MEMBER_COUNTRY_CODES,
+      venueRequests: (state.venueRequests || [])
+        .map((item) => ({
+          ...item,
+          organizer: accountLabel(state.accounts, item.organizerId),
+          raceTitle: state.races[item.raceId]?.title || item.raceTitle || '削除済み大会',
+        }))
+        .sort((left, right) => right.updatedAt - left.updatedAt),
       maintenance: maintenanceStatus(state),
     });
   }
@@ -543,19 +640,67 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
   if (pathname === '/api/admin/venues' && request.method === 'POST') {
     if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
     const body = await requestBody(request);
-    const type = body?.type;
+    const countryCode = String(body?.countryCode || '').toUpperCase()
+      || (body?.type === 'domestic' ? 'JP' : '');
     const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
-    const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 100) : '';
-    if (!['domestic', 'international'].includes(type) || !name || !location) {
-      return reply(400, { error: '区分、会場名、都道府県または国・地域を入力してください' });
+    const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 150) : '';
+    if (!UN_MEMBER_COUNTRY_CODES.includes(countryCode) || !name) {
+      return reply(400, { error: '国連加盟国と会場名を指定してください' });
     }
     return transact(env, (state) => {
       state.venues ||= [];
-      const venue = { id: crypto.randomUUID(), type, name, location, createdAt: Date.now() };
+      const venueIdentity = { countryCode, name, location };
+      if (state.venues.some((item) => matchesVenue(item, venueIdentity))) {
+        return reply(409, { error: '同じ国・所在地・会場名がすでに登録されています' });
+      }
+      const venue = {
+        id: crypto.randomUUID(),
+        ...venueIdentity,
+        country: countryDisplayNames.of(countryCode),
+        createdAt: Date.now(),
+      };
       state.venues.push(venue);
       const created = reply(201, { venue });
       created.changed = true;
       return created;
+    });
+  }
+
+  const venueRequestMatch = pathname.match(/^\/api\/admin\/venue-requests\/([0-9a-f-]{36})$/i);
+  if (venueRequestMatch && request.method === 'PATCH') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    const status = body?.status;
+    const adminNote = typeof body?.adminNote === 'string' ? body.adminNote.trim().slice(0, 1000) : '';
+    if (!['approved', 'rejected'].includes(status)) return reply(400, { error: '審査結果を選択してください' });
+    if (status === 'rejected' && !adminNote) return reply(400, { error: '却下理由を入力してください' });
+    return transact(env, (state) => {
+      state.venueRequests ||= [];
+      state.venues ||= [];
+      const venueRequest = state.venueRequests.find((item) => item.id === venueRequestMatch[1]);
+      if (!venueRequest) return reply(404, { error: '会場申請が見つかりません' });
+      if (venueRequest.status !== 'pending') return reply(409, { error: 'この申請は審査済みです' });
+      let venue = state.venues.find((item) => matchesVenue(item, venueRequest));
+      if (status === 'approved' && !venue) {
+        venue = {
+          id: crypto.randomUUID(),
+          countryCode: venueRequest.countryCode,
+          country: venueRequest.country,
+          location: venueRequest.location,
+          name: venueRequest.name,
+          createdAt: Date.now(),
+          sourceRequestId: venueRequest.id,
+        };
+        state.venues.push(venue);
+      }
+      venueRequest.status = status;
+      venueRequest.adminNote = adminNote;
+      venueRequest.reviewerId = user.id;
+      venueRequest.venueId = venue?.id || null;
+      venueRequest.updatedAt = Date.now();
+      const reviewed = reply(200, { venueRequest, venue: venue || null });
+      reviewed.changed = true;
+      return reviewed;
     });
   }
 
