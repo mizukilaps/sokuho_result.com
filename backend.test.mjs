@@ -141,12 +141,14 @@ test('organizers can request help and change a temporary password, while admins 
   const announcement = await request('/api/admin/announcements', {
     title: 'アップデートのお知らせ',
     message: '新機能を追加しました。',
+    important: true,
   }, adminSession);
   assert.equal(announcement.status, 201);
   const portal = await json(await request('/api/organizer/portal', undefined, temporarySession));
   assert.equal(portal.supportTickets.length, 1);
   assert.equal(portal.supportTickets[0].messages.at(-1).senderRole, 'admin');
   assert.equal(portal.announcements[0].seen, false);
+  assert.equal(portal.announcements[0].important, true);
   const readResponse = await request(`/api/organizer/announcements/${portal.announcements[0].id}/read`, {}, temporarySession);
   assert.equal(readResponse.status, 200);
   const updatedPortal = await json(await request('/api/organizer/portal', undefined, temporarySession));

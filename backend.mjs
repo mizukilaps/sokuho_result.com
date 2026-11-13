@@ -363,7 +363,11 @@ async function routeApi(request, env, url, user, tokenHash) {
         .filter((ticket) => ticket.organizerId === user.id)
         .sort((left, right) => right.updatedAt - left.updatedAt),
       announcements: (state.announcements || [])
-        .map((item) => ({ ...item, seen: (item.seenBy || []).includes(user.id) }))
+        .map((item) => ({
+          ...item,
+          important: Boolean(item.important),
+          seen: (item.seenBy || []).includes(user.id),
+        }))
         .sort((left, right) => right.createdAt - left.createdAt),
     });
   }
@@ -466,7 +470,9 @@ async function routeApi(request, env, url, user, tokenHash) {
           organizer: accountLabel(state.accounts, ticket.organizerId),
         }))
         .sort((left, right) => right.updatedAt - left.updatedAt),
-      announcements: (state.announcements || []).slice().sort((left, right) => right.createdAt - left.createdAt),
+      announcements: (state.announcements || [])
+        .map((item) => ({ ...item, important: Boolean(item.important) }))
+        .sort((left, right) => right.createdAt - left.createdAt),
     });
   }
 
@@ -482,6 +488,7 @@ async function routeApi(request, env, url, user, tokenHash) {
         id: crypto.randomUUID(),
         title,
         message,
+        important: body.important === true,
         authorId: user.id,
         createdAt: Date.now(),
         seenBy: [],

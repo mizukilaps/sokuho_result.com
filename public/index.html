@@ -125,6 +125,16 @@
     .admin-table { margin-top: 28px; }
     .portal-list { display: grid; gap: 12px; margin-top: 14px; }
     .portal-item { padding: 16px; border: 1px solid var(--line); background: white; }
+    .portal-item.important-item { border: 1px solid #e6a1b2; border-left: 5px solid #d83362; background: #fff1f4; }
+    .important-label { display: inline-block; margin-left: 6px; padding: 3px 8px; background: #d83362; color: white; font-size: 10px; font-weight: 800; vertical-align: middle; }
+    .important-dialog { border: 2px solid #d83362; box-shadow: 0 18px 60px rgba(114, 22, 52, .25); }
+    .important-dialog .dialog-head { background: #fff1f4; color: #8d173b; }
+    .important-dialog .dialog-body { display: grid; gap: 12px; }
+    .important-dialog-item { padding: 14px; border: 1px solid #e6a1b2; border-left: 5px solid #d83362; background: #fff7f8; }
+    .important-dialog-item h3 { margin: 0 0 6px; font-size: 16px; }
+    .important-dialog-item p { margin: 10px 0 0; white-space: pre-wrap; line-height: 1.7; }
+    .checkbox-field { display: flex; align-items: center; gap: 9px; margin: 0 0 17px; color: #46595a; font-size: 13px; font-weight: 700; }
+    .checkbox-field input { width: 18px; height: 18px; accent-color: #d83362; }
     .portal-item h3 { margin: 0 0 7px; font-size: 15px; }
     .portal-item p { white-space: pre-wrap; line-height: 1.65; }
     .portal-meta { color: var(--muted); font-size: 11px; }
@@ -248,9 +258,18 @@
       <div class="dialog-actions"><button class="primary" type="submit">競技を登録</button></div>
     </form>
   </dialog>
+  <dialog id="important-announcement-dialog" class="important-dialog" aria-labelledby="important-announcement-title">
+    <div class="dialog-head"><h2 id="important-announcement-title">運営者向け重要なお知らせ</h2></div>
+    <div class="dialog-body" id="important-announcement-list"></div>
+    <div class="dialog-actions">
+      <p class="error" id="important-announcement-error" role="alert"></p>
+      <button class="primary" id="acknowledge-important-announcements" type="button">確認しました</button>
+    </div>
+  </dialog>
   <script>
     const app = document.querySelector('#app');
     const eventDialog = document.querySelector('#event-dialog');
+    const importantAnnouncementDialog = document.querySelector('#important-announcement-dialog');
     const APP_BASE_PATH = document.querySelector('base').getAttribute('href').replace(/\/$/, '');
     const API_BASE_URL = String(window.SOKUHO_CONFIG?.apiBaseUrl || '').replace(/\/$/, '');
     const API_KEY = String(window.SOKUHO_CONFIG?.anonKey || '');
@@ -384,7 +403,7 @@
     function renderOrganizer(races, portal, animate = false) {
       app.innerHTML = `
         <section class="intro dashboard-heading"><div><div class="eyebrow">運営者ページ</div><h1>${escapeHtml(currentUser.name)} さん</h1><p class="intro-copy">大会の作成と速報記録を管理します。</p></div><button class="secondary" id="logout-button">ログアウト</button></section>
-        <section class="admin-table"><h2>アップデートのお知らせ</h2>${portal.announcements.length ? `<div class="portal-list">${portal.announcements.map((item) => `<article class="portal-item"><h3>${escapeHtml(item.title)}</h3><div class="portal-meta">${new Date(item.createdAt).toLocaleString('ja-JP')} ・ ${item.seen ? '確認済み' : '未確認'}</div><p>${escapeHtml(item.message)}</p>${item.seen ? '' : `<button class="secondary" data-read-announcement="${item.id}">確認済みにする</button>`}</article>`).join('')}</div>` : '<div class="empty">お知らせはまだありません。</div>'}</section>
+        <section class="admin-table"><h2>アップデートのお知らせ</h2>${portal.announcements.length ? `<div class="portal-list">${portal.announcements.map((item) => `<article class="portal-item ${item.important ? 'important-item' : ''}"><h3>${escapeHtml(item.title)}${item.important ? '<span class="important-label">重要</span>' : ''}</h3><div class="portal-meta">${new Date(item.createdAt).toLocaleString('ja-JP')} ・ ${item.seen ? '確認済み' : '未確認'}</div><p>${escapeHtml(item.message)}</p>${item.seen ? '' : `<button class="secondary" data-read-announcement="${item.id}">確認済みにする</button>`}</article>`).join('')}</div>` : '<div class="empty">お知らせはまだありません。</div>'}</section>
         <section class="admin-table"><h2>お問い合わせ</h2>
           <section class="group-panel">
             <form id="support-form">
@@ -419,6 +438,7 @@
       document.querySelectorAll('[data-read-announcement]').forEach((button) => {
         button.addEventListener('click', () => markAnnouncementRead(button.dataset.readAnnouncement));
       });
+      showImportantAnnouncements(portal.announcements);
       document.querySelectorAll('[data-race-id]').forEach((link) => {
         link.addEventListener('click', (clickEvent) => {
           if (clickEvent.metaKey || clickEvent.ctrlKey || clickEvent.shiftKey || clickEvent.altKey) return;
@@ -436,8 +456,8 @@
         <section class="intro dashboard-heading"><div><div class="eyebrow">DEVELOPER CONSOLE</div><h1>管理者ダッシュボード</h1><p class="intro-copy">ログイン中: ${escapeHtml(currentUser.email)}</p></div><button class="secondary" id="logout-button">ログアウト</button></section>
         <div class="admin-stats"><div class="stat"><strong>${summary.organizerCount}</strong>運営者</div><div class="stat"><strong>${summary.raceCount}</strong>大会</div></div>
         ${oneTimePassword ? `<section class="group-panel"><h2>一時パスワード（今回のみ表示）</h2><p>${escapeHtml(oneTimePassword.name)} ・ ${escapeHtml(oneTimePassword.email)}</p><p><strong>${escapeHtml(oneTimePassword.password)}</strong></p><p class="hint">このパスワードは保存されません。本人確認のうえ、安全な別経路で本人に伝えてください。本人はログイン後、新しいパスワードへの変更が必要です。</p><button class="secondary" id="dismiss-reset-password">表示を閉じる</button></section>` : ''}
-        <section class="admin-table"><h2>運営者への一斉お知らせ</h2><section class="group-panel"><form id="announcement-form"><div class="field"><label for="announcement-title">件名</label><input id="announcement-title" name="title" required maxlength="120"></div><div class="field"><label for="announcement-message">お知らせ内容</label><textarea id="announcement-message" name="message" required maxlength="3000"></textarea></div><p class="error" id="announcement-error" role="alert"></p><button class="primary" type="submit">全運営者に掲載</button></form></section>
-          ${summary.announcements.length ? `<div class="portal-list">${summary.announcements.map((item) => `<article class="portal-item"><h3>${escapeHtml(item.title)}</h3><div class="portal-meta">${new Date(item.createdAt).toLocaleString('ja-JP')} ・ 確認 ${item.seenBy.length}/${summary.organizerCount}名</div><p>${escapeHtml(item.message)}</p></article>`).join('')}</div>` : ''}
+        <section class="admin-table"><h2>運営者への一斉お知らせ</h2><section class="group-panel"><form id="announcement-form"><div class="field"><label for="announcement-title">件名</label><input id="announcement-title" name="title" required maxlength="120"></div><div class="field"><label for="announcement-message">お知らせ内容</label><textarea id="announcement-message" name="message" required maxlength="3000"></textarea></div><label class="checkbox-field"><input name="important" type="checkbox">重要なお知らせとして扱う</label><p class="hint">重要にすると、運営者ページで赤ピンク色に強調し、未確認の間はログイン後にピックアップ表示します。</p><p class="error" id="announcement-error" role="alert"></p><button class="primary" type="submit">全運営者に掲載</button></form></section>
+          ${summary.announcements.length ? `<div class="portal-list">${summary.announcements.map((item) => `<article class="portal-item ${item.important ? 'important-item' : ''}"><h3>${escapeHtml(item.title)}${item.important ? '<span class="important-label">重要</span>' : ''}</h3><div class="portal-meta">${new Date(item.createdAt).toLocaleString('ja-JP')} ・ 確認 ${item.seenBy.length}/${summary.organizerCount}名</div><p>${escapeHtml(item.message)}</p></article>`).join('')}</div>` : ''}
         </section>
         <section class="admin-table"><h2>お問い合わせ・パスワード変更依頼</h2>${summary.supportTickets.length ? `<div class="portal-list">${summary.supportTickets.map((ticket) => `<article class="portal-item"><h3>${escapeHtml(ticket.subject)} <span class="status-label">${ticket.status === 'open' ? '対応中' : ticket.status === 'answered' ? '返信あり' : '完了'}</span></h3><div class="portal-meta">${escapeHtml(ticket.organizer?.name || '削除済みアカウント')} ・ ${escapeHtml(ticket.organizer?.email || '')} ・ ${ticket.type === 'password' ? 'パスワード変更依頼' : 'お問い合わせ'} ・ ${new Date(ticket.updatedAt).toLocaleString('ja-JP')}</div>${ticket.messages.map((item) => `<div class="portal-message ${item.senderRole === 'admin' ? 'admin-message' : ''}"><strong>${item.senderRole === 'admin' ? '管理者' : '運営者'} ・ ${new Date(item.createdAt).toLocaleString('ja-JP')}</strong><br>${escapeHtml(item.body)}</div>`).join('')}<form class="admin-ticket-reply-form" data-ticket-id="${ticket.id}"><div class="field"><label>返信</label><textarea name="message" required maxlength="3000"></textarea></div><div class="portal-actions"><button class="secondary" type="submit">返信する</button><select data-ticket-status="${ticket.id}" aria-label="対応状況"><option value="open" ${ticket.status === 'open' ? 'selected' : ''}>対応中</option><option value="answered" ${ticket.status === 'answered' ? 'selected' : ''}>返信あり</option><option value="closed" ${ticket.status === 'closed' ? 'selected' : ''}>完了</option></select><button class="secondary" type="button" data-save-ticket-status="${ticket.id}">状況を保存</button>${ticket.type === 'password' && ticket.organizer ? `<button class="danger" type="button" data-reset-password="${ticket.organizer.id}" data-organizer-name="${escapeHtml(ticket.organizer.name)}" data-organizer-email="${escapeHtml(ticket.organizer.email)}">一時パスワードを発行</button>` : ''}</div></form></article>`).join('')}</div>` : '<div class="empty">お問い合わせはまだありません。</div>'}</section>
         <section class="admin-table"><h2>運営者アカウント</h2>${summary.organizers.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>主催大会</th><th>共同参加</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.organizers.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}</td><td data-label="主催大会">${item.ownedRaceCount}</td><td data-label="共同参加">${item.collaborationCount}</td><td data-label="登録日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="操作"><button class="secondary" data-reset-password="${item.id}" data-organizer-name="${escapeHtml(item.name)}" data-organizer-email="${escapeHtml(item.email)}">一時PW発行</button> <button class="danger" data-delete-organizer="${item.id}" data-organizer-name="${escapeHtml(item.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">運営者はまだ登録されていません。</div>'}</section>
@@ -474,7 +494,11 @@
       try {
         await request('/api/admin/announcements', {
           method: 'POST',
-          body: JSON.stringify({ title: form.get('title'), message: form.get('message') }),
+          body: JSON.stringify({
+            title: form.get('title'),
+            message: form.get('message'),
+            important: form.get('important') === 'on',
+          }),
         });
         await refreshAdmin();
       } catch (failure) {
@@ -576,6 +600,37 @@
       } catch (failure) {
         window.alert(failure.message);
       }
+    }
+
+    function showImportantAnnouncements(announcements) {
+      const unreadImportant = announcements.filter((item) => item.important && !item.seen);
+      if (!unreadImportant.length) return;
+      document.querySelector('#important-announcement-list').innerHTML = unreadImportant.map((item) => `
+        <article class="important-dialog-item">
+          <div class="portal-meta">${new Date(item.createdAt).toLocaleString('ja-JP')}</div>
+          <h3>${escapeHtml(item.title)}</h3>
+          <p>${escapeHtml(item.message)}</p>
+        </article>`).join('');
+      document.querySelector('#acknowledge-important-announcements').addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        const error = document.querySelector('#important-announcement-error');
+        button.disabled = true;
+        error.textContent = '';
+        try {
+          for (const announcement of unreadImportant) {
+            await request(`/api/organizer/announcements/${encodeURIComponent(announcement.id)}/read`, {
+              method: 'POST',
+              body: '{}',
+            });
+          }
+          importantAnnouncementDialog.close();
+          await showHome(true);
+        } catch (failure) {
+          error.textContent = failure.message;
+          button.disabled = false;
+        }
+      }, { once: true });
+      importantAnnouncementDialog.showModal();
     }
 
     function renderPasswordChange(animate = false) {

@@ -570,7 +570,7 @@ const server = http.createServer((request, response) => {
         .filter((ticket) => ticket.organizerId === user.id)
         .sort((left, right) => right.updatedAt - left.updatedAt),
       announcements: accounts.announcements
-        .map((item) => ({ ...item, seen: item.seenBy.includes(user.id) }))
+        .map((item) => ({ ...item, important: Boolean(item.important), seen: item.seenBy.includes(user.id) }))
         .sort((left, right) => right.createdAt - left.createdAt),
     });
     return;
@@ -688,7 +688,9 @@ const server = http.createServer((request, response) => {
       supportTickets: accounts.supportTickets
         .map((ticket) => ({ ...ticket, organizer: accountLabel(accounts, ticket.organizerId) }))
         .sort((left, right) => right.updatedAt - left.updatedAt),
-      announcements: accounts.announcements.slice().sort((left, right) => right.createdAt - left.createdAt),
+      announcements: accounts.announcements
+        .map((item) => ({ ...item, important: Boolean(item.important) }))
+        .sort((left, right) => right.createdAt - left.createdAt),
     });
     return;
   }
@@ -710,6 +712,7 @@ const server = http.createServer((request, response) => {
         id: crypto.randomUUID(),
         title,
         message,
+        important: body.important === true,
         authorId: user.id,
         createdAt: Date.now(),
         seenBy: [],
