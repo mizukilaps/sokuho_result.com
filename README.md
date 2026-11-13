@@ -82,8 +82,10 @@ Cloudflare Pagesの静的ファイル配信は無料です。Supabase Freeでも
 
 ヘッダーのSOKUHOロゴは独自作成のSVGです。全ページ下部にはスポンサー欄を固定表示しています。
 
+- 筑波大学: 公式サイトのロゴSVG: https://www.tsukuba.ac.jp/assets/img/common/logo-w.svg
+- NISHI: 株式会社ニシ・スポーツ公式サイトのロゴSVG: https://www.nishi.com/cms/nishi/common/images/logo_nishi_wh.svg
 - New Balance: Simple IconsのSVG（CC0）: https://github.com/simple-icons/simple-icons/blob/develop/icons/newbalance.svg
 - Cramer Japan: 公式サイトのロゴGIF: https://www.cramer.co.jp/cgi-bin/wordpress/wp-content/uploads/2014/03/logomain.gif
 - GitHub: GitHub公式ロゴ配布のマークPNG: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
 
-スポンサー表示は各ロゴの形状・配色を変更せず、表示サイズのみ調整しています。公開利用は各社のブランドガイドラインと使用許諾に従ってください。
+ヘッダーでは右側に筑波大学ロゴと「supported by」およびNISHIロゴを表示しています。スポンサー表示は各ロゴの形状・配色を変更せず、表示サイズのみ調整しています。公開利用は各社のブランドガイドラインと使用許諾に従ってください。

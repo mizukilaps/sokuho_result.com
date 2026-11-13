@@ -36,7 +36,10 @@
     .masthead-inner { width: min(1120px, calc(100% - 36px)); margin: auto; min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
     .brand { display: flex; align-items: center; gap: 12px; font-size: 15px; font-weight: 800; letter-spacing: 0; }
     .sokuho-logo { display: block; width: 176px; height: auto; }
-    .masthead-note { color: #c5d5cf; font-size: 12px; }
+    .masthead-partners { display: flex; align-items: center; gap: 18px; flex-shrink: 0; }
+    .tsukuba-logo { display: block; width: 108px; height: auto; }
+    .nishi-support { display: grid; justify-items: start; gap: 4px; color: #c5d5cf; font-size: 9px; font-weight: 700; line-height: 1; text-decoration: none; white-space: nowrap; }
+    .nishi-logo { display: block; width: 76px; height: auto; }
     main { width: min(1120px, calc(100% - 36px)); margin: 30px auto 60px; }
     .intro { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
     .eyebrow { color: var(--forest); font-size: 11px; font-weight: 800; letter-spacing: 0; text-transform: uppercase; }
@@ -147,8 +150,11 @@
       .masthead-inner, main { width: min(100% - 24px, 1120px); }
       .masthead-inner { min-height: 58px; gap: 8px; }
       .brand { gap: 8px; font-size: 13px; }
-      .sokuho-logo { width: 142px; }
-      .masthead-note { max-width: 78px; font-size: 10px; text-align: right; }
+      .sokuho-logo { width: 132px; }
+      .masthead-partners { gap: 10px; }
+      .tsukuba-logo { width: 78px; }
+      .nishi-support { font-size: 8px; }
+      .nishi-logo { width: 54px; }
       main { margin-top: 20px; }
       .intro { display: block; }.intro-copy { margin-top: 10px; }
       .create-layout { grid-template-columns: minmax(0, 1fr); }
@@ -190,7 +196,15 @@
   <header class="masthead">
     <div class="masthead-inner">
       <a class="brand" href="./" aria-label="SOKUHO ホーム"><img class="sokuho-logo" src="sokuho-logo.svg" alt="SOKUHO"></a>
-      <span class="masthead-note">陸上競技　速報記録</span>
+      <div class="masthead-partners" aria-label="協力">
+        <a href="https://www.tsukuba.ac.jp/" target="_blank" rel="noopener noreferrer" aria-label="筑波大学">
+          <img class="tsukuba-logo" src="tsukuba-logo.svg" alt="筑波大学">
+        </a>
+        <a class="nishi-support" href="https://www.nishi.com/" target="_blank" rel="noopener noreferrer" aria-label="supported by NISHI">
+          <span>supported by</span>
+          <img class="nishi-logo" src="nishi-logo.svg" alt="NISHI">
+        </a>
+      </div>
     </div>
   </header>
   <main id="app" aria-live="polite"></main>
