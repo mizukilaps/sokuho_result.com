@@ -236,3 +236,71 @@ test('organizers can request help and change a temporary password, while admins 
   assert.equal(closedTicket.status, 200);
   assert.equal((await json(await request('/api/organizer/portal', undefined, temporarySession))).supportTickets[0].status, 'closed');
 });
+
+test('admins can manage domestic and international venue suggestions for organizers', async () => {
+  const { default: backend } = await import('./backend.mjs?admin-venue-catalog');
+  let version = 0;
+  let state = { races: {}, accounts: { users: [], sessions: {} } };
+  const DB = {
+    async load() {
+      return { version, state: structuredClone(state) };
+    },
+    async compareAndSwap(expectedVersion, nextState) {
+      if (expectedVersion !== version) return false;
+      state = structuredClone(nextState);
+      version += 1;
+      return true;
+    },
+  };
+  const env = { DB, ADMIN_EMAIL: 'admin@example.com', ADMIN_PASSWORD: 'admin-password-123' };
+  const request = async (path, body, session, method = body ? 'POST' : 'GET') => backend.fetch(new Request(`https://example.test${path}`, {
+    method,
+    headers: {
+      ...(body ? { 'content-type': 'application/json' } : {}),
+      ...(session ? { 'x-sokuho-session': session } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  }), env);
+  const json = async (response) => response.json();
+
+  await request('/api/auth/me');
+  const adminLogin = await request('/api/auth/login', {
+    email: env.ADMIN_EMAIL,
+    password: env.ADMIN_PASSWORD,
+  });
+  const adminSession = adminLogin.headers.get('x-sokuho-session');
+  const registration = await request('/api/auth/register', {
+    name: '運営者',
+    email: 'venue-organizer@example.com',
+    password: 'organizer-password-123',
+  });
+  const organizerSession = registration.headers.get('x-sokuho-session');
+
+  assert.equal((await request('/api/admin/venues', { type: 'domestic', location: '東京都', name: '国立競技場' })).status, 401);
+  assert.equal((await request('/api/admin/venues', { type: 'domestic', location: '東京都', name: '国立競技場' }, organizerSession)).status, 403);
+  assert.equal((await request('/api/admin/venues', { type: 'unknown', location: '東京都', name: '国立競技場' }, adminSession)).status, 400);
+
+  const domesticResponse = await request('/api/admin/venues', {
+    type: 'domestic',
+    location: '東京都',
+    name: '国立競技場',
+  }, adminSession);
+  const domesticVenue = (await json(domesticResponse)).venue;
+  assert.equal(domesticResponse.status, 201);
+  const internationalResponse = await request('/api/admin/venues', {
+    type: 'international',
+    location: 'アメリカ・カリフォルニア州',
+    name: 'Example Stadium',
+  }, adminSession);
+  assert.equal(internationalResponse.status, 201);
+
+  const portal = await json(await request('/api/organizer/portal', undefined, organizerSession));
+  assert.deepEqual(portal.venues.map(({ type, location, name }) => ({ type, location, name })), [
+    { type: 'domestic', location: '東京都', name: '国立競技場' },
+    { type: 'international', location: 'アメリカ・カリフォルニア州', name: 'Example Stadium' },
+  ]);
+  assert.equal((await request(`/api/admin/venues/${domesticVenue.id}`, undefined, organizerSession, 'DELETE')).status, 403);
+  assert.equal((await request(`/api/admin/venues/${domesticVenue.id}`, undefined, adminSession, 'DELETE')).status, 200);
+  const summary = await json(await request('/api/admin/summary', undefined, adminSession));
+  assert.deepEqual(summary.venues.map((venue) => venue.name), ['Example Stadium']);
+});

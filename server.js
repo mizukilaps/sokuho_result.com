@@ -34,9 +34,10 @@ function readAccounts() {
     accounts.supportTickets ||= [];
     accounts.announcements ||= [];
     accounts.auditLog ||= [];
+    accounts.venues ||= [];
     return accounts;
   } catch (error) {
-    if (error.code === 'ENOENT') return { users: [], sessions: {}, supportTickets: [], announcements: [], auditLog: [] };
+    if (error.code === 'ENOENT') return { users: [], sessions: {}, supportTickets: [], announcements: [], auditLog: [], venues: [] };
     throw error;
   }
 }
@@ -682,6 +683,7 @@ const server = http.createServer((request, response) => {
       announcements: accounts.announcements
         .map((item) => ({ ...item, important: Boolean(item.important), seen: item.seenBy.includes(user.id) }))
         .sort((left, right) => right.createdAt - left.createdAt),
+      venues: accounts.venues,
     });
     return;
   }
@@ -806,7 +808,30 @@ const server = http.createServer((request, response) => {
       announcements: accounts.announcements
         .map((item) => ({ ...item, important: Boolean(item.important) }))
         .sort((left, right) => right.createdAt - left.createdAt),
+      venues: accounts.venues,
     });
+    return;
+  }
+
+  if (url.pathname === '/api/admin/venues' && request.method === 'POST') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then((body) => {
+      const type = body?.type;
+      const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
+      const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 100) : '';
+      if (!['domestic', 'international'].includes(type) || !name || !location) {
+        sendJson(response, 400, { error: '区分、会場名、都道府県または国・地域を入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const venue = { id: crypto.randomUUID(), type, name, location, createdAt: Date.now() };
+      accounts.venues.push(venue);
+      saveAccounts(accounts);
+      sendJson(response, 201, { venue });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
     return;
   }
 
@@ -898,7 +923,19 @@ const server = http.createServer((request, response) => {
       sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
       return;
     }
-
+    const venueMatch = url.pathname.match(/^\/api\/admin\/venues\/([0-9a-f-]{36})$/i);
+    if (venueMatch) {
+      const accounts = readAccounts();
+      const venueIndex = accounts.venues.findIndex((venue) => venue.id === venueMatch[1]);
+      if (venueIndex < 0) {
+        sendJson(response, 404, { error: '会場が見つかりません' });
+        return;
+      }
+      accounts.venues.splice(venueIndex, 1);
+      saveAccounts(accounts);
+      sendJson(response, 200, { ok: true });
+      return;
+    }
     const raceMatch = url.pathname.match(/^\/api\/admin\/races\/([A-Za-z0-9_-]{12})$/);
     if (raceMatch) {
       const races = readRaces();

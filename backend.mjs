@@ -384,6 +384,7 @@ async function routeApi(request, env, url, user, tokenHash) {
           seen: (item.seenBy || []).includes(user.id),
         }))
         .sort((left, right) => right.createdAt - left.createdAt),
+      venues: state.venues || [],
     });
   }
 
@@ -493,6 +494,26 @@ async function routeApi(request, env, url, user, tokenHash) {
       announcements: (state.announcements || [])
         .map((item) => ({ ...item, important: Boolean(item.important) }))
         .sort((left, right) => right.createdAt - left.createdAt),
+      venues: state.venues || [],
+    });
+  }
+
+  if (pathname === '/api/admin/venues' && request.method === 'POST') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    const type = body?.type;
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
+    const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 100) : '';
+    if (!['domestic', 'international'].includes(type) || !name || !location) {
+      return reply(400, { error: '区分、会場名、都道府県または国・地域を入力してください' });
+    }
+    return transact(env, (state) => {
+      state.venues ||= [];
+      const venue = { id: crypto.randomUUID(), type, name, location, createdAt: Date.now() };
+      state.venues.push(venue);
+      const created = reply(201, { venue });
+      created.changed = true;
+      return created;
     });
   }
 
@@ -562,6 +583,18 @@ async function routeApi(request, env, url, user, tokenHash) {
 
   if (pathname.startsWith('/api/admin/') && request.method === 'DELETE') {
     if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const venueMatch = pathname.match(/^\/api\/admin\/venues\/([0-9a-f-]{36})$/i);
+    if (venueMatch) {
+      return transact(env, (state) => {
+        state.venues ||= [];
+        const venueIndex = state.venues.findIndex((venue) => venue.id === venueMatch[1]);
+        if (venueIndex < 0) return reply(404, { error: '会場が見つかりません' });
+        state.venues.splice(venueIndex, 1);
+        const deleted = reply(200, { ok: true });
+        deleted.changed = true;
+        return deleted;
+      });
+    }
     const raceMatch = pathname.match(/^\/api\/admin\/races\/([A-Za-z0-9_-]{12})$/);
     if (raceMatch) {
       return transact(env, (state) => {

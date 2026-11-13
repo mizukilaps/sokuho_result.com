@@ -451,8 +451,9 @@
             <div class="field"><label for="race-title">大会名</label><input id="race-title" name="title" placeholder="例：春季陸上競技記録会" required maxlength="80"></div>
             <div class="field-grid">
               <div class="field"><label for="race-date">開催日</label><input id="race-date" name="date" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
-              <div class="field"><label for="race-venue">会場</label><input id="race-venue" name="venue" placeholder="会場名" maxlength="80"></div>
+              <div class="field"><label for="race-venue">会場</label><input id="race-venue" name="venue" list="race-venue-options" placeholder="会場名を入力" maxlength="80" autocomplete="off"><datalist id="race-venue-options">${portal.venues.map((venue) => `<option value="${escapeHtml(venue.name)}" label="${escapeHtml(`${venue.type === 'domestic' ? '国内' : '海外'} ・ ${venue.location}`)}"></option>`).join('')}</datalist></div>
             </div>
+            <p class="hint">会場名を入力すると、管理者が登録した国内・海外の会場候補が表示されます。候補にない会場も入力できます。</p>
             <p class="error" id="create-error" role="alert"></p>
             <button class="primary wide" type="submit">大会ページを作成</button>
           </form>
@@ -506,6 +507,7 @@
         <section class="admin-table"><h2>運営者への一斉お知らせ</h2><section class="group-panel"><form id="announcement-form"><div class="field"><label for="announcement-title">件名</label><input id="announcement-title" name="title" required maxlength="120"></div><div class="field"><label for="announcement-message">お知らせ内容</label><textarea id="announcement-message" name="message" required maxlength="3000"></textarea></div><label class="checkbox-field"><input name="important" type="checkbox">重要なお知らせとして扱う</label><p class="hint">重要にすると、運営者ページで赤ピンク色に強調し、未確認の間はログイン後にピックアップ表示します。</p><p class="error" id="announcement-error" role="alert"></p><button class="primary" type="submit">全運営者に掲載</button></form></section>
           ${summary.announcements.length ? `<div class="portal-list">${summary.announcements.map((item) => `<article class="portal-item ${item.important ? 'important-item' : ''}"><h3>${escapeHtml(item.title)}${item.important ? '<span class="important-label">重要</span>' : ''}</h3><div class="portal-meta">${new Date(item.createdAt).toLocaleString('ja-JP')} ・ 確認 ${item.seenBy.length}/${summary.organizerCount}名</div><p>${escapeHtml(item.message)}</p></article>`).join('')}</div>` : ''}
         </section>
+        <section class="admin-table"><h2>会場の一斉登録</h2><section class="group-panel"><form id="venue-form"><div class="field-grid"><div class="field"><label for="venue-type">会場区分</label><select id="venue-type" name="type"><option value="domestic">国内</option><option value="international">海外</option></select></div><div class="field"><label for="venue-location" id="venue-location-label">都道府県</label><input id="venue-location" name="location" required maxlength="100" placeholder="例：東京都"></div></div><div class="field"><label for="venue-name">会場名</label><input id="venue-name" name="name" required maxlength="100" placeholder="例：国立競技場"></div><p class="hint">会場を1件ずつ登録できます。登録後、運営者の大会作成フォームに入力候補として表示されます。</p><p class="error" id="venue-error" role="alert"></p><button class="primary" type="submit">会場を登録</button></form></section>${summary.venues.length ? `<div class="table-wrap"><table><thead><tr><th>区分</th><th>都道府県・国・地域</th><th>会場名</th><th>操作</th></tr></thead><tbody>${summary.venues.map((venue) => `<tr><td data-label="区分">${venue.type === 'domestic' ? '国内' : '海外'}</td><td data-label="都道府県・国・地域">${escapeHtml(venue.location)}</td><td class="athlete-name" data-label="会場名">${escapeHtml(venue.name)}</td><td data-label="操作"><button class="danger" data-delete-venue="${venue.id}" data-venue-name="${escapeHtml(venue.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">登録済みの会場はありません。</div>'}</section>
         <section class="admin-table"><h2>お問い合わせ・パスワード変更依頼</h2>${summary.supportTickets.length ? `<div class="portal-list">${summary.supportTickets.map((ticket) => `<article class="portal-item"><h3>${escapeHtml(ticket.subject)} <span class="status-label">${ticket.status === 'open' ? '対応中' : ticket.status === 'answered' ? '返信あり' : '完了'}</span></h3><div class="portal-meta">${escapeHtml(ticket.organizer?.name || '削除済みアカウント')} ・ ${escapeHtml(ticket.organizer?.email || '')} ・ ${ticket.type === 'password' ? 'パスワード変更依頼' : 'お問い合わせ'} ・ ${new Date(ticket.updatedAt).toLocaleString('ja-JP')}</div>${ticket.messages.map((item) => `<div class="portal-message ${item.senderRole === 'admin' ? 'admin-message' : ''}"><strong>${item.senderRole === 'admin' ? '管理者' : '運営者'} ・ ${new Date(item.createdAt).toLocaleString('ja-JP')}</strong><br>${escapeHtml(item.body)}</div>`).join('')}<form class="admin-ticket-reply-form" data-ticket-id="${ticket.id}"><div class="field"><label>返信</label><textarea name="message" required maxlength="3000"></textarea></div><div class="portal-actions"><button class="secondary" type="submit">返信する</button><select data-ticket-status="${ticket.id}" aria-label="対応状況"><option value="open" ${ticket.status === 'open' ? 'selected' : ''}>対応中</option><option value="answered" ${ticket.status === 'answered' ? 'selected' : ''}>返信あり</option><option value="closed" ${ticket.status === 'closed' ? 'selected' : ''}>完了</option></select><button class="secondary" type="button" data-save-ticket-status="${ticket.id}">状況を保存</button>${ticket.type === 'password' && ticket.organizer ? `<button class="danger" type="button" data-reset-password="${ticket.organizer.id}" data-organizer-name="${escapeHtml(ticket.organizer.name)}" data-organizer-email="${escapeHtml(ticket.organizer.email)}">一時パスワードを発行</button>` : ''}</div></form></article>`).join('')}</div>` : '<div class="empty">お問い合わせはまだありません。</div>'}</section>
         <section class="admin-table"><h2>運営者アカウント</h2>${summary.organizers.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>主催大会</th><th>共同参加</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.organizers.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}</td><td data-label="主催大会">${item.ownedRaceCount}</td><td data-label="共同参加">${item.collaborationCount}</td><td data-label="登録日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="操作"><button class="secondary" data-reset-password="${item.id}" data-organizer-name="${escapeHtml(item.name)}" data-organizer-email="${escapeHtml(item.email)}">一時PW発行</button> <button class="danger" data-delete-organizer="${item.id}" data-organizer-name="${escapeHtml(item.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">運営者はまだ登録されていません。</div>'}</section>
         <section class="admin-table"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>速報URL</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td class="race-url" data-label="速報URL"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">${escapeHtml(new URL(pageUrl(item.publicPath), location.origin).href)}</a><br><button class="secondary" type="button" data-copy-race-url="${item.id}">URLをコピー</button></td><td data-label="大会"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>
@@ -513,6 +515,8 @@
       animatePage(animate);
       document.querySelector('#logout-button').addEventListener('click', logout);
       document.querySelector('#announcement-form').addEventListener('submit', submitAnnouncement);
+      document.querySelector('#venue-form').addEventListener('submit', submitVenue);
+      document.querySelector('#venue-type').addEventListener('change', updateVenueLocationLabel);
       document.querySelectorAll('.admin-ticket-reply-form').forEach((form) => form.addEventListener('submit', submitAdminTicketReply));
       document.querySelectorAll('[data-save-ticket-status]').forEach((button) => {
         button.addEventListener('click', () => saveTicketStatus(button.dataset.saveTicketStatus));
@@ -529,6 +533,9 @@
       });
       document.querySelectorAll('[data-delete-race]').forEach((button) => {
         button.addEventListener('click', () => deleteAdminItem('races', button.dataset.deleteRace, button.dataset.raceTitle));
+      });
+      document.querySelectorAll('[data-delete-venue]').forEach((button) => {
+        button.addEventListener('click', () => deleteAdminItem('venues', button.dataset.deleteVenue, button.dataset.venueName));
       });
       document.querySelectorAll('[data-copy-race-url]').forEach((button) => {
         button.addEventListener('click', () => copyRaceUrl(button.dataset.copyRaceUrl, button));
@@ -566,6 +573,30 @@
       } catch (failure) {
         document.querySelector('#announcement-error').textContent = failure.message;
       }
+    }
+
+    async function submitVenue(event) {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      try {
+        await request('/api/admin/venues', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: form.get('type'),
+            location: form.get('location'),
+            name: form.get('name'),
+          }),
+        });
+        await refreshAdmin();
+      } catch (failure) {
+        document.querySelector('#venue-error').textContent = failure.message;
+      }
+    }
+
+    function updateVenueLocationLabel() {
+      const international = document.querySelector('#venue-type').value === 'international';
+      document.querySelector('#venue-location-label').textContent = international ? '国・地域' : '都道府県';
+      document.querySelector('#venue-location').placeholder = international ? '例：アメリカ・カリフォルニア州' : '例：東京都';
     }
 
     async function submitAdminTicketReply(event) {
@@ -612,7 +643,9 @@
     async function deleteAdminItem(type, id, label) {
       const message = type === 'organizers'
         ? `運営者「${label}」のアカウントを削除します。所有する大会と記録もすべて削除されます。この操作は取り消せません。よろしいですか？`
-        : `大会「${label}」と登録済みの競技・記録を削除します。この操作は取り消せません。よろしいですか？`;
+        : type === 'venues'
+          ? `会場「${label}」を候補一覧から削除します。作成済み大会の会場名は変更されません。よろしいですか？`
+          : `大会「${label}」と登録済みの競技・記録を削除します。この操作は取り消せません。よろしいですか？`;
       if (!window.confirm(message)) return;
       try {
         await request(`/api/admin/${type}/${encodeURIComponent(id)}`, { method: 'DELETE' });
