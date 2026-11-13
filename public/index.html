@@ -145,6 +145,17 @@
     .portal-actions .field { flex: 1; margin: 0; }
     .portal-item .field textarea { min-height: 90px; }
     .status-label { display: inline-block; padding: 3px 8px; background: #eee9f5; color: var(--forest); font-size: 10px; font-weight: 800; }
+    .athlete-edit-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px; align-items: end; padding: 10px 0; border-top: 1px solid var(--line); }
+    .athlete-edit-row .field { min-width: 0; margin: 0; }
+    .athlete-edit-row .field label { font-size: 10px; }
+    .athlete-edit-row .field input { min-width: 0; }
+    .athlete-edit-row .remove-athlete { min-height: 36px; padding-inline: 9px; }
+    .athlete-edit-row .finish-edit { grid-column: 1 / 4; }
+    .event-schedule { color: var(--muted); font-size: 11px; }
+    .toolbar-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .audit-entry { padding: 14px; border: 1px solid var(--line); background: white; }
+    .audit-entry h3 { margin: 0 0 6px; font-size: 14px; }
+    .audit-entry pre { max-height: 180px; overflow: auto; margin: 8px 0 0; padding: 10px; background: #f5f2f9; font: inherit; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
     .group-panel { margin: 18px 0; padding: 18px 20px; border: 1px solid var(--line); background: white; }
     .group-panel-head { display: flex; align-items: start; justify-content: space-between; gap: 18px; }
     .group-panel h2 { margin: 0; font-size: 15px; }
@@ -182,6 +193,8 @@
       .create-layout { grid-template-columns: minmax(0, 1fr); }
       .race-head { padding: 17px; }.race-heading { display: block; }.head-actions { margin-top: 15px; }.stats { justify-content: space-between; gap: 8px; }
       .toolbar { align-items: stretch; flex-direction: column; }.toolbar-left { align-items: stretch; }.toolbar .field { min-width: 0; flex: 1; }.toolbar .primary { flex-shrink: 0; padding: 0 11px; }
+      .toolbar-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }.toolbar-actions button { padding-inline: 8px; }
+      .athlete-edit-row { grid-template-columns: 1fr 1fr; }.athlete-edit-row .finish-edit { grid-column: 1 / -1; }
       .start-bar { align-items: stretch; flex-direction: column; }.start-button { width: 100%; }
       .dashboard-heading { align-items: start; flex-direction: column; }.dashboard-heading .intro-copy { margin-top: 4px; }
       .admin-stats { justify-content: space-between; gap: 10px; padding-inline: 8px; }
@@ -252,11 +265,24 @@
       <div class="dialog-body">
         <div class="field"><label for="event-name">競技名</label><input id="event-name" name="name" placeholder="男子 100m" required maxlength="60"></div>
         <div class="field"><label for="event-round">ラウンド・組</label><input id="event-round" name="round" placeholder="予選 1組" maxlength="30"></div>
-        <div class="field"><label for="athletes">選手・所属</label><textarea id="athletes" name="athletes" placeholder="山田 太郎 | 青葉中\n佐藤 花子 | 港中\n鈴木 一郎" required></textarea></div>
-        <p class="hint">1行に1名。所属を付ける場合は「選手名 | 所属」で入力してください。入力順にレーンを割り当てます。</p>
+        <div class="field"><label for="event-scheduled-at">予定開始時刻</label><input id="event-scheduled-at" name="scheduledAt" type="datetime-local" step="1"></div>
+        <div class="field"><label for="event-started-at">実際のスタート時刻（訂正用）</label><input id="event-started-at" name="startedAt" type="datetime-local" step="0.001"></div>
+        <div class="field"><strong>選手名簿</strong><span class="hint">同じ大会に登録済みの選手名・所属・学年は候補に表示されます。新しい値も入力できます。</span></div>
+        <div id="athlete-edit-list"></div>
+        <button class="secondary" id="append-athlete-row" type="button">選手を追加</button>
+        <datalist id="athlete-name-options"></datalist>
+        <datalist id="athlete-team-options"></datalist>
+        <datalist id="athlete-grade-options">
+          <option value="小1"><option value="小2"><option value="小3"><option value="小4"><option value="小5"><option value="小6">
+          <option value="中1"><option value="中2"><option value="中3">
+          <option value="高1"><option value="高2"><option value="高3">
+          <option value="大1"><option value="大2"><option value="大3"><option value="大4">
+          <option value="一般"><option value="その他">
+        </datalist>
+        <p class="hint">フィニッシュ済み選手の記録は秒単位で修正できます。記録がある競技の編集時は変更内容を確認します。</p>
         <p class="error" id="event-error" role="alert"></p>
       </div>
-      <div class="dialog-actions"><button class="primary" type="submit">競技を登録</button></div>
+      <div class="dialog-actions"><button class="primary" id="save-event-button" type="submit">競技を登録</button></div>
     </form>
   </dialog>
   <dialog id="important-announcement-dialog" class="important-dialog" aria-labelledby="important-announcement-title">
@@ -276,6 +302,7 @@
     const API_KEY = String(window.SOKUHO_CONFIG?.anonKey || '');
     let race = null;
     let selectedEventId = null;
+    let editingEventId = null;
     let clockOffset = 0;
     let racePollTimer = null;
     let routeToken = 0;
@@ -452,6 +479,25 @@
 
     let oneTimePassword = null;
 
+    function auditSnapshotSummary(snapshot) {
+      if (Array.isArray(snapshot)) return snapshot.map((event) => `${event.name}${event.round ? ` (${event.round})` : ''}`).join(' → ');
+      if (!snapshot || typeof snapshot !== 'object') return '';
+      const start = snapshot.startedAt ? new Date(snapshot.startedAt).toLocaleString('ja-JP') : '未記録';
+      const scheduled = snapshot.scheduledAt ? new Date(snapshot.scheduledAt).toLocaleString('ja-JP') : '未設定';
+      const athletes = (snapshot.athletes || []).map((athlete) => {
+        const time = athlete.finishedAt && snapshot.startedAt
+          ? `${((athlete.finishedAt - snapshot.startedAt) / 1000).toFixed(2)}秒`
+          : '未記録';
+        return `- ${athlete.lane}レーン ${athlete.name} / ${athlete.team || '所属なし'} / ${athlete.grade || '学年なし'} / ${time}`;
+      });
+      return [
+        `${snapshot.name}${snapshot.round ? ` (${snapshot.round})` : ''}`,
+        `予定開始: ${scheduled}`,
+        `スタート: ${start}`,
+        ...athletes,
+      ].join('\n');
+    }
+
     function renderAdmin(summary, animate = false) {
       app.innerHTML = `
         <section class="intro dashboard-heading"><div><div class="eyebrow">DEVELOPER CONSOLE</div><h1>管理者ダッシュボード</h1><p class="intro-copy">ログイン中: ${escapeHtml(currentUser.email)}</p></div><button class="secondary" id="logout-button">ログアウト</button></section>
@@ -462,7 +508,8 @@
         </section>
         <section class="admin-table"><h2>お問い合わせ・パスワード変更依頼</h2>${summary.supportTickets.length ? `<div class="portal-list">${summary.supportTickets.map((ticket) => `<article class="portal-item"><h3>${escapeHtml(ticket.subject)} <span class="status-label">${ticket.status === 'open' ? '対応中' : ticket.status === 'answered' ? '返信あり' : '完了'}</span></h3><div class="portal-meta">${escapeHtml(ticket.organizer?.name || '削除済みアカウント')} ・ ${escapeHtml(ticket.organizer?.email || '')} ・ ${ticket.type === 'password' ? 'パスワード変更依頼' : 'お問い合わせ'} ・ ${new Date(ticket.updatedAt).toLocaleString('ja-JP')}</div>${ticket.messages.map((item) => `<div class="portal-message ${item.senderRole === 'admin' ? 'admin-message' : ''}"><strong>${item.senderRole === 'admin' ? '管理者' : '運営者'} ・ ${new Date(item.createdAt).toLocaleString('ja-JP')}</strong><br>${escapeHtml(item.body)}</div>`).join('')}<form class="admin-ticket-reply-form" data-ticket-id="${ticket.id}"><div class="field"><label>返信</label><textarea name="message" required maxlength="3000"></textarea></div><div class="portal-actions"><button class="secondary" type="submit">返信する</button><select data-ticket-status="${ticket.id}" aria-label="対応状況"><option value="open" ${ticket.status === 'open' ? 'selected' : ''}>対応中</option><option value="answered" ${ticket.status === 'answered' ? 'selected' : ''}>返信あり</option><option value="closed" ${ticket.status === 'closed' ? 'selected' : ''}>完了</option></select><button class="secondary" type="button" data-save-ticket-status="${ticket.id}">状況を保存</button>${ticket.type === 'password' && ticket.organizer ? `<button class="danger" type="button" data-reset-password="${ticket.organizer.id}" data-organizer-name="${escapeHtml(ticket.organizer.name)}" data-organizer-email="${escapeHtml(ticket.organizer.email)}">一時パスワードを発行</button>` : ''}</div></form></article>`).join('')}</div>` : '<div class="empty">お問い合わせはまだありません。</div>'}</section>
         <section class="admin-table"><h2>運営者アカウント</h2>${summary.organizers.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>主催大会</th><th>共同参加</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.organizers.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}</td><td data-label="主催大会">${item.ownedRaceCount}</td><td data-label="共同参加">${item.collaborationCount}</td><td data-label="登録日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="操作"><button class="secondary" data-reset-password="${item.id}" data-organizer-name="${escapeHtml(item.name)}" data-organizer-email="${escapeHtml(item.email)}">一時PW発行</button> <button class="danger" data-delete-organizer="${item.id}" data-organizer-name="${escapeHtml(item.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">運営者はまだ登録されていません。</div>'}</section>
-        <section class="admin-table"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>速報URL</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td class="race-url" data-label="速報URL"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">${escapeHtml(new URL(pageUrl(item.publicPath), location.origin).href)}</a><br><button class="secondary" type="button" data-copy-race-url="${item.id}">URLをコピー</button></td><td data-label="大会"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>`;
+        <section class="admin-table"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>速報URL</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td class="race-url" data-label="速報URL"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">${escapeHtml(new URL(pageUrl(item.publicPath), location.origin).href)}</a><br><button class="secondary" type="button" data-copy-race-url="${item.id}">URLをコピー</button></td><td data-label="大会"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>
+        <section class="admin-table"><h2>競技情報の変更履歴</h2>${summary.auditLog.length ? `<div class="portal-list">${summary.auditLog.map((entry) => `<article class="audit-entry"><h3>${entry.action === 'event_order_changed' ? '競技順を変更' : '競技・選手・記録を編集'}</h3><div class="portal-meta">${escapeHtml(entry.raceTitle || '大会')} ・ ${escapeHtml(entry.actor?.name || '削除済み運営者')} ・ ${new Date(entry.createdAt).toLocaleString('ja-JP')}</div><details><summary>変更前・変更後を表示</summary><strong>変更前</strong><pre>${escapeHtml(auditSnapshotSummary(entry.before))}</pre><strong>変更後</strong><pre>${escapeHtml(auditSnapshotSummary(entry.after))}</pre></details></article>`).join('')}</div>` : '<div class="empty">競技情報の変更履歴はまだありません。</div>'}</section>`;
       animatePage(animate);
       document.querySelector('#logout-button').addEventListener('click', logout);
       document.querySelector('#announcement-form').addEventListener('submit', submitAnnouncement);
@@ -832,6 +879,7 @@
       const finishedCount = selectedAthletes.filter((athlete) => athlete.finishedAt).length;
       const started = Boolean(event?.startedAt);
       const canManage = raceAccess.canManage;
+      const currentEventIndex = race.events.findIndex((item) => item.id === event?.id);
       const rankings = [...selectedAthletes].filter((athlete) => athlete.finishedAt)
         .sort((left, right) => resultFor(event, left) - resultFor(event, right));
       const placeByAthlete = new Map(rankings.map((athlete, index) => [athlete.id, index + 1]));
@@ -842,6 +890,7 @@
           <td class="lane" data-label="レーン"><span class="lane-number">${athlete.lane}</span></td>
           <td data-label="選手名"><span class="athlete-name">${escapeHtml(athlete.name)}</span></td>
           <td class="team" data-label="所属">${escapeHtml(athlete.team || '—')}</td>
+          <td data-label="学年">${escapeHtml(athlete.grade || '—')}</td>
           <td data-label="記録"><span class="place">${athlete.finishedAt ? `${placeByAthlete.get(athlete.id)}着` : '—'}</span><span class="result-time">${duration === null ? '—' : formatTime(duration)}</span></td>
           <td data-label="状況"><span class="status ${athlete.finishedAt ? 'finished' : ''}">${athlete.finishedAt ? 'フィニッシュ' : started ? '競技中' : '未スタート'}</span></td>
           ${canManage ? `<td data-label="操作"><button class="record-button" data-finish="${athlete.id}" ${canFinish ? '' : 'disabled'}>${athlete.finishedAt ? '記録済み' : 'FINISH'}</button></td>` : ''}
@@ -854,8 +903,9 @@
           <div class="stats"><div class="stat"><strong>${race.events.length}</strong>競技</div><div class="stat"><strong>${event ? selectedAthletes.length : 0}</strong>出走</div><div class="stat"><strong>${finishedCount}</strong>記録</div></div>
         </section>
         ${renderGroupPanel()}
-        <section class="toolbar"><div class="toolbar-left"><div class="field"><label for="event-select">競技・組</label><select id="event-select" ${race.events.length ? '' : 'disabled'}>${race.events.length ? race.events.map((item) => `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(item.name)}${item.round ? `　${escapeHtml(item.round)}` : ''}</option>`).join('') : '<option>競技を登録してください</option>'}</select></div><span class="live-state" id="connection-state"><i class="live-dot"></i><span>接続中...</span></span></div>${canManage ? '<button class="primary" id="add-event">競技を追加</button>' : ''}</section>
-        ${event ? `<section aria-label="競技速報"><div class="table-wrap"><table><thead><tr><th class="lane">ﾚｰﾝ</th><th>選手名</th><th>所属</th><th>記録</th><th>状況</th>${canManage ? '<th>操作</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>${canManage ? `<div class="start-bar"><div class="start-copy"><strong>${started ? event.status === 'complete' ? '全員フィニッシュ' : 'レース進行中' : 'スタート待機中'}</strong><span>${started ? `スタート時刻を記録済み　/　${finishedCount} of ${selectedAthletes.length} finish` : 'スタート地点の端末でスタートを記録してください'}</span></div><button class="primary start-button" id="start-button" ${started ? 'disabled' : ''}>${started ? 'START RECORDED' : 'スタートを記録'}</button></div>` : ''}</section>` : `<div class="empty"><strong>競技がまだ登録されていません</strong>${canManage ? '「競技を追加」から最初の組と出走選手を登録してください。' : '大会運営者が競技を登録すると、ここに速報が表示されます。'}</div>`}
+        <section class="toolbar"><div class="toolbar-left"><div class="field"><label for="event-select">競技・組</label><select id="event-select" ${race.events.length ? '' : 'disabled'}>${race.events.length ? race.events.map((item) => `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(item.name)}${item.round ? `　${escapeHtml(item.round)}` : ''}${item.scheduledAt ? ` ・ ${new Date(item.scheduledAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}予定` : ''}</option>`).join('') : '<option>競技を登録してください</option>'}</select></div><span class="live-state" id="connection-state"><i class="live-dot"></i><span>接続中...</span></span></div>${canManage ? `<div class="toolbar-actions"><button class="primary" id="add-event">競技を追加</button>${event ? `<button class="secondary" id="edit-event">競技・選手を編集</button><button class="secondary" id="export-results">CSV出力</button><button class="secondary" id="move-event-up" ${currentEventIndex <= 0 ? 'disabled' : ''}>競技を上へ</button><button class="secondary" id="move-event-down" ${currentEventIndex >= race.events.length - 1 ? 'disabled' : ''}>競技を下へ</button>` : ''}</div>` : ''}</section>
+        ${event?.scheduledAt ? `<p class="event-schedule">予定開始：${new Date(event.scheduledAt).toLocaleString('ja-JP')}</p>` : ''}
+        ${event ? `<section aria-label="競技速報"><div class="table-wrap"><table><thead><tr><th class="lane">ﾚｰﾝ</th><th>選手名</th><th>所属</th><th>学年</th><th>記録</th><th>状況</th>${canManage ? '<th>操作</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>${canManage ? `<div class="start-bar"><div class="start-copy"><strong>${started ? event.status === 'complete' ? '全員フィニッシュ' : 'レース進行中' : 'スタート待機中'}</strong><span>${started ? `スタート時刻を記録済み　/　${finishedCount} of ${selectedAthletes.length} finish` : 'スタート地点でスタートを記録してください'}</span></div><button class="primary start-button" id="start-button" ${started ? 'disabled' : ''}>${started ? 'START RECORDED' : 'スタートを記録'}</button></div>` : ''}</section>` : `<div class="empty"><strong>競技がまだ登録されていません</strong>${canManage ? '「競技を追加」から最初の組と出走選手を登録してください。' : '大会運営者が競技を登録すると、ここに速報が表示されます。'}</div>`}
         <div class="footnote"><span>時刻はサーバーと同期した端末時刻を使った速報値です。操作・通信環境により誤差が生じます。</span><span>${canManage ? '計時操作は大会運営者アカウントに限定されています。' : '共有URLは閲覧専用です。記録の変更は大会運営者のみ行えます。'}</span></div>`;
       animatePage(animate);
       bindGroupControls();
@@ -864,10 +914,11 @@
         selectedEventId = changeEvent.currentTarget.value;
         renderRace();
       });
-      document.querySelector('#add-event').addEventListener('click', () => {
-        document.querySelector('#event-error').textContent = '';
-        eventDialog.showModal();
-      });
+      document.querySelector('#add-event')?.addEventListener('click', openNewEventEditor);
+      document.querySelector('#edit-event')?.addEventListener('click', () => openExistingEventEditor(event));
+      document.querySelector('#export-results')?.addEventListener('click', exportRaceCsv);
+      document.querySelector('#move-event-up')?.addEventListener('click', () => moveEvent(-1));
+      document.querySelector('#move-event-down')?.addEventListener('click', () => moveEvent(1));
       document.querySelector('#share-button').addEventListener('click', async () => {
         const button = document.querySelector('#share-button');
         try {
@@ -904,26 +955,173 @@
       }
     }
 
+    function toLocalDateTime(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      const pad = (part, size = 2) => String(part).padStart(size, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
+    }
+
+    function rosterValues(field) {
+      return [...new Set(race.events.flatMap((item) => item.athletes.map((athlete) => athlete[field]).filter(Boolean)))];
+    }
+
+    function renderAthleteRows(athletes = [], withTimes = false, startedAt = null) {
+      const container = document.querySelector('#athlete-edit-list');
+      const allAthletes = athletes.length ? athletes : [{}];
+      document.querySelector('#athlete-name-options').innerHTML = rosterValues('name').map((item) => `<option value="${escapeHtml(item)}">`).join('');
+      document.querySelector('#athlete-team-options').innerHTML = rosterValues('team').map((item) => `<option value="${escapeHtml(item)}">`).join('');
+      container.innerHTML = allAthletes.map((athlete) => athleteRowMarkup(athlete, withTimes, startedAt)).join('');
+    }
+
+    function athleteRowMarkup(athlete = {}, withTimes = false, startedAt = null) {
+      const elapsed = athlete.finishedAt && startedAt
+        ? ((athlete.finishedAt - startedAt) / 1000).toFixed(2)
+        : '';
+      return `<div class="athlete-edit-row">
+          <input type="hidden" name="athleteId" value="${escapeHtml(athlete.id || '')}">
+          <div class="field"><label>選手名</label><input name="athleteName" list="athlete-name-options" value="${escapeHtml(athlete.name || '')}" required maxlength="50"></div>
+          <div class="field"><label>所属</label><input name="athleteTeam" list="athlete-team-options" value="${escapeHtml(athlete.team || '')}" maxlength="50"></div>
+          <div class="field"><label>学年</label><input name="athleteGrade" list="athlete-grade-options" value="${escapeHtml(athlete.grade || '')}" maxlength="30"></div>
+          ${withTimes ? `<div class="field finish-edit"><label>記録（秒・空欄で未記録）</label><input name="athleteFinish" type="number" min="0" step="0.01" value="${elapsed}"></div>` : ''}
+          <button class="danger remove-athlete" type="button" aria-label="選手を削除">削除</button>
+        </div>`;
+    }
+
+    function openNewEventEditor() {
+      editingEventId = null;
+      const form = document.querySelector('#event-form');
+      form.reset();
+      form.elements.startedAt.value = '';
+      document.querySelector('#event-form h2').textContent = '競技を追加';
+      document.querySelector('#save-event-button').textContent = '競技を登録';
+      document.querySelector('#event-error').textContent = '';
+      renderAthleteRows();
+      eventDialog.showModal();
+    }
+
+    function openExistingEventEditor(event) {
+      editingEventId = event.id;
+      const form = document.querySelector('#event-form');
+      form.elements.name.value = event.name;
+      form.elements.round.value = event.round || '';
+      form.elements.scheduledAt.value = toLocalDateTime(event.scheduledAt);
+      form.elements.startedAt.value = toLocalDateTime(event.startedAt);
+      document.querySelector('#event-form h2').textContent = '競技・選手・記録を編集';
+      document.querySelector('#save-event-button').textContent = '変更を保存';
+      document.querySelector('#event-error').textContent = '';
+      renderAthleteRows(event.athletes, true, event.startedAt);
+      eventDialog.showModal();
+    }
+
     async function addEvent(event) {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
-      const athletes = String(form.get('athletes') || '').split('\n').map((line) => {
-        const [name, team = ''] = line.split('|');
-        return { name: name.trim(), team: team.trim() };
-      }).filter((athlete) => athlete.name);
+      const startedAt = event.currentTarget.elements.startedAt.value
+        ? new Date(event.currentTarget.elements.startedAt.value).getTime()
+        : null;
+      const scheduledAt = event.currentTarget.elements.scheduledAt.value
+        ? new Date(event.currentTarget.elements.scheduledAt.value).getTime()
+        : null;
+      const athletes = [...document.querySelectorAll('#athlete-edit-list .athlete-edit-row')]
+        .map((row) => {
+          const finishInput = row.querySelector('[name="athleteFinish"]');
+          const elapsed = finishInput?.value === '' ? null : Number(finishInput?.value);
+          return {
+            id: row.querySelector('[name="athleteId"]').value || undefined,
+            name: row.querySelector('[name="athleteName"]').value.trim(),
+            team: row.querySelector('[name="athleteTeam"]').value.trim(),
+            grade: row.querySelector('[name="athleteGrade"]').value.trim(),
+            finishedAt: elapsed === null ? null : startedAt + elapsed * 1000,
+          };
+        })
+        .filter((athlete) => athlete.name);
       const error = document.querySelector('#event-error');
       try {
-        const result = await request(`/api/races/${encodeURIComponent(race.id)}/events`, {
-          method: 'POST',
-          body: JSON.stringify({ name: form.get('name'), round: form.get('round'), athletes }),
-        });
-        selectedEventId = result.event.id;
-        event.currentTarget.reset();
+        if (!athletes.length) throw new Error('選手を1名以上入力してください');
+        if (athletes.length > 12) throw new Error('1競技に登録できる選手は12名までです');
+        if (editingEventId) {
+          const current = race.events.find((item) => item.id === editingEventId);
+          if ((current.startedAt || current.athletes.some((item) => item.finishedAt))
+            && !window.confirm('スタート・フィニッシュ記録を含む競技情報を変更します。変更前後は履歴に記録されます。保存しますか？')) return;
+          const result = await request(`/api/races/${encodeURIComponent(race.id)}/events/${encodeURIComponent(editingEventId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              name: form.get('name'),
+              round: form.get('round'),
+              startedAt,
+              scheduledAt,
+              athletes,
+            }),
+          });
+          race = result.race;
+          selectedEventId = editingEventId;
+        } else {
+          const result = await request(`/api/races/${encodeURIComponent(race.id)}/events`, {
+            method: 'POST',
+            body: JSON.stringify({ name: form.get('name'), round: form.get('round'), scheduledAt, athletes }),
+          });
+          race = result.race;
+          selectedEventId = result.event.id;
+        }
+        editingEventId = null;
         eventDialog.close();
         renderRace();
       } catch (failure) {
         error.textContent = failure.message;
       }
+    }
+
+    async function moveEvent(direction) {
+      const currentIndex = race.events.findIndex((item) => item.id === selectedEventId);
+      const targetIndex = currentIndex + direction;
+      if (currentIndex < 0 || targetIndex < 0 || targetIndex >= race.events.length) return;
+      const eventIds = race.events.map((item) => item.id);
+      [eventIds[currentIndex], eventIds[targetIndex]] = [eventIds[targetIndex], eventIds[currentIndex]];
+      try {
+        const result = await request(`/api/races/${encodeURIComponent(race.id)}/events/order`, {
+          method: 'PATCH',
+          body: JSON.stringify({ eventIds }),
+        });
+        race = result.race;
+        renderRace();
+      } catch (failure) {
+        window.alert(failure.message);
+      }
+    }
+
+    function exportRaceCsv() {
+      const quote = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+      const rows = [['大会', '開催日', '会場', '競技', '組', '予定開始', 'レーン', '選手', '所属', '学年', '記録秒', '着順', '状態']];
+      for (const event of race.events) {
+        const ranked = event.athletes.filter((athlete) => athlete.finishedAt)
+          .sort((left, right) => left.finishedAt - right.finishedAt);
+        const placeById = new Map(ranked.map((athlete, index) => [athlete.id, index + 1]));
+        for (const athlete of event.athletes) {
+          rows.push([
+            race.title,
+            race.date,
+            race.venue,
+            event.name,
+            event.round,
+            event.scheduledAt ? new Date(event.scheduledAt).toLocaleString('ja-JP') : '',
+            athlete.lane,
+            athlete.name,
+            athlete.team,
+            athlete.grade,
+            athlete.finishedAt && event.startedAt ? ((athlete.finishedAt - event.startedAt) / 1000).toFixed(2) : '',
+            placeById.get(athlete.id) || '',
+            athlete.finishedAt ? 'フィニッシュ' : event.startedAt ? '競技中' : '未スタート',
+          ]);
+        }
+      }
+      const csv = `\uFEFF${rows.map((row) => row.map(quote).join(',')).join('\r\n')}`;
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${race.title.replace(/[\\/:*?"<>|]/g, '_')}-results.csv`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     async function loadRace(id, animate = false) {
@@ -995,6 +1193,13 @@
 
     document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => eventDialog.close()));
     document.querySelector('#event-form').addEventListener('submit', addEvent);
+    document.querySelector('#append-athlete-row').addEventListener('click', () => {
+      document.querySelector('#athlete-edit-list').insertAdjacentHTML('beforeend', athleteRowMarkup());
+    });
+    document.querySelector('#athlete-edit-list').addEventListener('click', (event) => {
+      const removeButton = event.target.closest('.remove-athlete');
+      if (removeButton) removeButton.closest('.athlete-edit-row').remove();
+    });
     window.addEventListener('popstate', () => showCurrentRoute(true));
     showCurrentRoute();
     setInterval(() => { syncClock().catch(() => {}); }, 300000);

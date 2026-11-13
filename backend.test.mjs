@@ -150,12 +150,66 @@ test('organizers can request help and change a temporary password, while admins 
   assert.equal(publicSnapshot.group, null);
   const addEvent = await request(`/api/races/${race.id}/events`, {
     name: '男子100m',
-    athletes: [{ name: 'テスト選手' }],
+    scheduledAt: 1763020000000,
+    athletes: [{ name: 'テスト選手', team: '青葉中', grade: '中2' }],
   }, temporarySession);
   assert.equal(addEvent.status, 201);
+  const firstEvent = (await json(addEvent)).event;
+  assert.equal(firstEvent.athletes[0].grade, '中2');
+  assert.equal(firstEvent.scheduledAt, 1763020000000);
+  assert.equal((await request(`/api/races/${race.id}/events/${firstEvent.id}`, {
+    name: '記録を修正',
+    round: '決勝',
+    startedAt: null,
+    scheduledAt: null,
+    athletes: firstEvent.athletes.map((athlete) => ({ ...athlete, grade: '中3', finishedAt: null })),
+  }, undefined, 'PATCH')).status, 401);
+  const start = await request(`/api/races/${race.id}/start`, {
+    eventId: firstEvent.id,
+    clientTime: 1000,
+  }, temporarySession);
+  assert.equal(start.status, 200);
+  const finish = await request(`/api/races/${race.id}/finish`, {
+    eventId: firstEvent.id,
+    athleteId: firstEvent.athletes[0].id,
+    clientTime: 61000,
+  }, temporarySession);
+  assert.equal(finish.status, 200);
+  const updateEvent = await request(`/api/races/${race.id}/events/${firstEvent.id}`, {
+    name: '男子100m 決勝',
+    round: '決勝',
+    startedAt: 1000,
+    scheduledAt: 1763020000000,
+    athletes: [{ ...firstEvent.athletes[0], grade: '中3', finishedAt: 62000 }],
+  }, temporarySession, 'PATCH');
+  assert.equal(updateEvent.status, 200);
+  const updatedEvent = (await json(updateEvent)).event;
+  assert.equal(updatedEvent.athletes[0].finishedAt, 62000);
+  assert.equal(updatedEvent.athletes[0].grade, '中3');
+  const invalidCorrection = await request(`/api/races/${race.id}/events/${firstEvent.id}`, {
+    name: '不正な記録',
+    round: '決勝',
+    startedAt: 1000,
+    scheduledAt: null,
+    athletes: [{ ...updatedEvent.athletes[0], finishedAt: 1000 }],
+  }, temporarySession, 'PATCH');
+  assert.equal(invalidCorrection.status, 400);
+  assert.equal(state.races[race.id].events[0].athletes[0].finishedAt, 62000);
+  const addSecondEvent = await request(`/api/races/${race.id}/events`, {
+    name: '女子100m',
+    athletes: [{ name: '別の選手', team: '港中', grade: '中1' }],
+  }, temporarySession);
+  const secondEvent = (await json(addSecondEvent)).event;
+  const reordered = await request(`/api/races/${race.id}/events/order`, {
+    eventIds: [secondEvent.id, firstEvent.id],
+  }, temporarySession, 'PATCH');
+  assert.equal(reordered.status, 200);
+  assert.deepEqual((await json(reordered)).race.events.map((item) => item.id), [secondEvent.id, firstEvent.id]);
+  assert.equal(state.auditLog.length, 2);
   const publicRaceAfterUpdate = await json(await request(`/api/races/${race.id}`));
   assert.equal(publicRaceAfterUpdate.id, race.id);
-  assert.equal(publicRaceAfterUpdate.events[0].name, '男子100m');
+  assert.equal(publicRaceAfterUpdate.events[1].name, '男子100m 決勝');
+  assert.equal(publicRaceAfterUpdate.events[1].athletes[0].grade, '中3');
 
   const announcement = await request('/api/admin/announcements', {
     title: 'アップデートのお知らせ',
@@ -165,6 +219,9 @@ test('organizers can request help and change a temporary password, while admins 
   assert.equal(announcement.status, 201);
   const adminSummary = await json(await request('/api/admin/summary', undefined, adminSession));
   assert.equal(adminSummary.races[0].publicPath, `/r/${race.id}`);
+  assert.equal(adminSummary.auditLog[0].action, 'event_order_changed');
+  assert.equal(adminSummary.auditLog[0].actor.id, organizerId);
+  assert.equal(adminSummary.auditLog[1].action, 'event_updated');
   const portal = await json(await request('/api/organizer/portal', undefined, temporarySession));
   assert.equal(portal.supportTickets.length, 1);
   assert.equal(portal.supportTickets[0].messages.at(-1).senderRole, 'admin');

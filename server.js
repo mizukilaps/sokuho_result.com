@@ -33,9 +33,10 @@ function readAccounts() {
     const accounts = JSON.parse(fs.readFileSync(accountsFile, 'utf8'));
     accounts.supportTickets ||= [];
     accounts.announcements ||= [];
+    accounts.auditLog ||= [];
     return accounts;
   } catch (error) {
-    if (error.code === 'ENOENT') return { users: [], sessions: {}, supportTickets: [], announcements: [] };
+    if (error.code === 'ENOENT') return { users: [], sessions: {}, supportTickets: [], announcements: [], auditLog: [] };
     throw error;
   }
 }
@@ -108,6 +109,21 @@ function canManageRace(user, race) {
 function accountLabel(accounts, userId) {
   const user = accounts.users.find((item) => item.id === userId);
   return user ? { id: user.id, name: user.name, email: user.email } : null;
+}
+
+function addAuditEntry(accounts, user, race, action, before, after) {
+  accounts.auditLog ||= [];
+  accounts.auditLog.push({
+    id: crypto.randomUUID(),
+    actorId: user.id,
+    actorRole: user.role,
+    raceId: race.id,
+    raceTitle: race.title,
+    action,
+    before: structuredClone(before),
+    after: structuredClone(after),
+    createdAt: Date.now(),
+  });
 }
 
 function groupDetails(race, accounts) {
@@ -321,6 +337,94 @@ function routeRace(request, response, url, user) {
     return;
   }
 
+  if (action === 'events' && request.method === 'PATCH') {
+    readBody(request).then((body) => {
+      const latestRaces = readRaces();
+      const latestRace = latestRaces[raceId];
+      if (!latestRace || !canManageRace(user, latestRace)) {
+        sendJson(response, 403, { error: 'この大会を操作する権限がありません' });
+        return;
+      }
+      const accounts = readAccounts();
+      if (subaction === 'order') {
+        const eventIds = Array.isArray(body.eventIds) ? body.eventIds : [];
+        const currentIds = latestRace.events.map((item) => item.id);
+        if (eventIds.length !== currentIds.length
+          || new Set(eventIds).size !== currentIds.length
+          || eventIds.some((id) => !currentIds.includes(id))) {
+          sendJson(response, 400, { error: '競技順のデータが正しくありません' });
+          return;
+        }
+        const before = latestRace.events.map(({ id, name, round }) => ({ id, name, round }));
+        const byId = new Map(latestRace.events.map((item) => [item.id, item]));
+        latestRace.events = eventIds.map((id) => byId.get(id));
+        const after = latestRace.events.map(({ id, name, round }) => ({ id, name, round }));
+        addAuditEntry(accounts, user, latestRace, 'event_order_changed', before, after);
+        saveRaces(latestRaces);
+        saveAccounts(accounts);
+        broadcast(latestRace);
+        sendJson(response, 200, { race: latestRace });
+        return;
+      }
+
+      const event = latestRace.events.find((item) => item.id === subaction);
+      if (!event) {
+        sendJson(response, 404, { error: '競技が見つかりません' });
+        return;
+      }
+      const name = String(body.name || '').trim().slice(0, 60);
+      const round = String(body.round || '').trim().slice(0, 30);
+      const athletes = Array.isArray(body.athletes) ? body.athletes : [];
+      const startedAt = body.startedAt === null || body.startedAt === '' ? null : Number(body.startedAt);
+      const scheduledAt = body.scheduledAt === null || body.scheduledAt === '' ? null : Number(body.scheduledAt);
+      if (!name || !athletes.length || athletes.length > 12
+        || (startedAt !== null && (!Number.isFinite(startedAt) || startedAt < 0))
+        || (scheduledAt !== null && (!Number.isFinite(scheduledAt) || scheduledAt < 0))) {
+        sendJson(response, 400, { error: '競技名、選手、開始予定・記録時刻を確認してください' });
+        return;
+      }
+      const knownIds = new Set(event.athletes.map((item) => item.id));
+      const ids = athletes.map((item) => String(item.id || '')).filter(Boolean);
+      if (new Set(ids).size !== ids.length || ids.some((id) => !knownIds.has(id))) {
+        sendJson(response, 400, { error: '選手データが正しくありません。画面を再読み込みしてください' });
+        return;
+      }
+      const updatedAthletes = athletes.map((athlete, index) => {
+        const current = athlete.id ? event.athletes.find((item) => item.id === athlete.id) : null;
+        const finishedAt = athlete.finishedAt === null || athlete.finishedAt === '' ? null : Number(athlete.finishedAt);
+        return {
+          id: current?.id || crypto.randomUUID(),
+          lane: index + 1,
+          name: String(athlete.name || '').trim().slice(0, 50),
+          team: String(athlete.team || '').trim().slice(0, 50),
+          grade: String(athlete.grade || '').trim().slice(0, 30),
+          finishedAt,
+        };
+      });
+      if (updatedAthletes.some((item) => !item.name
+        || (item.finishedAt !== null && (!Number.isFinite(item.finishedAt) || item.finishedAt < 0
+          || startedAt === null || item.finishedAt <= startedAt)))) {
+        sendJson(response, 400, { error: '選手名と、スタート後の正しいフィニッシュ時刻を入力してください' });
+        return;
+      }
+      const before = structuredClone(event);
+      event.name = name;
+      event.round = round;
+      event.startedAt = startedAt;
+      event.scheduledAt = scheduledAt;
+      event.athletes = updatedAthletes;
+      event.status = startedAt === null ? 'ready'
+        : updatedAthletes.every((item) => item.finishedAt !== null) ? 'complete'
+          : 'running';
+      addAuditEntry(accounts, user, latestRace, 'event_updated', before, event);
+      saveRaces(latestRaces);
+      saveAccounts(accounts);
+      broadcast(latestRace);
+      sendJson(response, 200, { race: latestRace, event });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
   if (request.method === 'GET' && action === 'stream') {
     response.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -349,7 +453,11 @@ function routeRace(request, response, url, user) {
       const name = String(body.name || '').trim().slice(0, 60);
       const round = String(body.round || '').trim().slice(0, 30);
       const athletes = Array.isArray(body.athletes) ? body.athletes.slice(0, 12) : [];
-      if (!name || athletes.length === 0) {
+      const scheduledAt = body.scheduledAt === null || body.scheduledAt === '' || body.scheduledAt === undefined
+        ? null
+        : Number(body.scheduledAt);
+      if (!name || athletes.length === 0
+        || (scheduledAt !== null && (!Number.isFinite(scheduledAt) || scheduledAt < 0))) {
         sendJson(response, 400, { error: '競技名と選手を入力してください' });
         return;
       }
@@ -357,6 +465,7 @@ function routeRace(request, response, url, user) {
         id: crypto.randomUUID(),
         name,
         round,
+        scheduledAt,
         status: 'ready',
         startedAt: null,
         athletes: athletes.map((athlete, index) => ({
@@ -364,6 +473,7 @@ function routeRace(request, response, url, user) {
           lane: index + 1,
           name: String(athlete.name || '').trim().slice(0, 50),
           team: String(athlete.team || '').trim().slice(0, 50),
+          grade: String(athlete.grade || '').trim().slice(0, 30),
           finishedAt: null,
         })).filter((athlete) => athlete.name),
       };
@@ -686,6 +796,10 @@ const server = http.createServer((request, response) => {
         collaborationCount: races.filter((race) => (race.collaborationGroup?.memberIds || []).includes(id)).length,
       })),
       races: raceSummaries,
+      auditLog: accounts.auditLog.slice(-100).reverse().map((entry) => ({
+        ...entry,
+        actor: accountLabel(accounts, entry.actorId),
+      })),
       supportTickets: accounts.supportTickets
         .map((ticket) => ({ ...ticket, organizer: accountLabel(accounts, ticket.organizerId) }))
         .sort((left, right) => right.updatedAt - left.updatedAt),
