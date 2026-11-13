@@ -30,9 +30,12 @@ function saveRaces(races) {
 
 function readAccounts() {
   try {
-    return JSON.parse(fs.readFileSync(accountsFile, 'utf8'));
+    const accounts = JSON.parse(fs.readFileSync(accountsFile, 'utf8'));
+    accounts.supportTickets ||= [];
+    accounts.announcements ||= [];
+    return accounts;
   } catch (error) {
-    if (error.code === 'ENOENT') return { users: [], sessions: {} };
+    if (error.code === 'ENOENT') return { users: [], sessions: {}, supportTickets: [], announcements: [] };
     throw error;
   }
 }
@@ -73,7 +76,13 @@ function currentUser(request) {
   const session = accounts.sessions[tokenHash];
   if (!session || session.expiresAt <= Date.now()) return null;
   const user = accounts.users.find((item) => item.id === session.userId);
-  return user ? { id: user.id, name: user.name, email: user.email, role: user.role } : null;
+  return user ? {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    mustChangePassword: Boolean(user.mustChangePassword),
+  } : null;
 }
 
 function createSession(request, response, user, accounts) {
@@ -434,6 +443,10 @@ function routeRace(request, response, url, user) {
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
   const user = currentUser(request);
+  if (user?.mustChangePassword && !['/api/auth/me', '/api/auth/logout', '/api/auth/password/change'].includes(url.pathname)) {
+    sendJson(response, 403, { error: '一時パスワードを変更してからご利用ください' });
+    return;
+  }
 
   if (url.pathname === '/api/auth/me' && request.method === 'GET') {
     sendJson(response, 200, { user });
@@ -490,7 +503,15 @@ const server = http.createServer((request, response) => {
         return;
       }
       createSession(request, response, foundUser, accounts);
-      sendJson(response, 200, { user: { id: foundUser.id, name: foundUser.name, email, role: foundUser.role } });
+      sendJson(response, 200, {
+        user: {
+          id: foundUser.id,
+          name: foundUser.name,
+          email,
+          role: foundUser.role,
+          mustChangePassword: Boolean(foundUser.mustChangePassword),
+        },
+      });
     }).catch((error) => sendJson(response, 400, { error: error.message }));
     return;
   }
@@ -501,6 +522,138 @@ const server = http.createServer((request, response) => {
     if (token) delete accounts.sessions[crypto.createHash('sha256').update(token).digest('hex')];
     saveAccounts(accounts);
     response.setHeader('set-cookie', sessionCookie(request, '', 0));
+    sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (url.pathname === '/api/auth/password/change' && request.method === 'POST') {
+    if (user?.role !== 'organizer' || !user.mustChangePassword) {
+      sendJson(response, user ? 403 : 401, { error: 'パスワード変更が必要な運営者のみ利用できます' });
+      return;
+    }
+    readBody(request).then(async (body) => {
+      const password = String(body.password || '');
+      if (password.length < 12) {
+        sendJson(response, 400, { error: '新しいパスワードは12文字以上にしてください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const organizer = accounts.users.find((item) => item.id === user.id && item.role === 'organizer');
+      const token = cookieMap(request).sokuho_session;
+      const tokenHash = token && crypto.createHash('sha256').update(token).digest('hex');
+      if (!organizer?.mustChangePassword || !accounts.sessions[tokenHash]) {
+        sendJson(response, 401, { error: 'ログイン状態を確認できません。もう一度ログインしてください' });
+        return;
+      }
+      organizer.salt = crypto.randomBytes(16).toString('hex');
+      organizer.passwordHash = await passwordHash(password, organizer.salt);
+      delete organizer.mustChangePassword;
+      for (const [sessionId, session] of Object.entries(accounts.sessions)) {
+        if (session.userId === organizer.id && sessionId !== tokenHash) delete accounts.sessions[sessionId];
+      }
+      saveAccounts(accounts);
+      sendJson(response, 200, {
+        user: { id: organizer.id, name: organizer.name, email: organizer.email, role: organizer.role, mustChangePassword: false },
+      });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  if (url.pathname === '/api/organizer/portal' && request.method === 'GET') {
+    if (user?.role !== 'organizer') {
+      sendJson(response, user ? 403 : 401, { error: '運営者としてログインしてください' });
+      return;
+    }
+    const accounts = readAccounts();
+    sendJson(response, 200, {
+      supportTickets: accounts.supportTickets
+        .filter((ticket) => ticket.organizerId === user.id)
+        .sort((left, right) => right.updatedAt - left.updatedAt),
+      announcements: accounts.announcements
+        .map((item) => ({ ...item, seen: item.seenBy.includes(user.id) }))
+        .sort((left, right) => right.createdAt - left.createdAt),
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/support' && request.method === 'POST') {
+    if (user?.role !== 'organizer') {
+      sendJson(response, user ? 403 : 401, { error: 'お問い合わせには運営者ログインが必要です' });
+      return;
+    }
+    readBody(request).then((body) => {
+      const subject = String(body.subject || '').trim().slice(0, 120);
+      const message = String(body.message || '').trim().slice(0, 3000);
+      const type = body.type === 'password' ? 'password' : 'question';
+      if (!subject || !message) {
+        sendJson(response, 400, { error: '件名とお問い合わせ内容を入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const now = Date.now();
+      const ticket = {
+        id: crypto.randomUUID(),
+        organizerId: user.id,
+        type,
+        subject,
+        status: 'open',
+        messages: [{ id: crypto.randomUUID(), senderId: user.id, senderRole: 'organizer', body: message, createdAt: now }],
+        createdAt: now,
+        updatedAt: now,
+      };
+      accounts.supportTickets.push(ticket);
+      saveAccounts(accounts);
+      sendJson(response, 201, { ticket });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  const supportMessageMatch = url.pathname.match(/^\/api\/support\/([0-9a-f-]{36})\/messages$/i);
+  if (supportMessageMatch && request.method === 'POST') {
+    if (!user || !['organizer', 'admin'].includes(user.role)) {
+      sendJson(response, user ? 403 : 401, { error: 'ログインしてください' });
+      return;
+    }
+    readBody(request).then((body) => {
+      const message = String(body.message || '').trim().slice(0, 3000);
+      if (!message) {
+        sendJson(response, 400, { error: '返信内容を入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const ticket = accounts.supportTickets.find((item) => item.id === supportMessageMatch[1]);
+      if (!ticket) {
+        sendJson(response, 404, { error: 'お問い合わせが見つかりません' });
+        return;
+      }
+      if (user.role === 'organizer' && ticket.organizerId !== user.id) {
+        sendJson(response, 403, { error: 'このお問い合わせに返信する権限がありません' });
+        return;
+      }
+      const now = Date.now();
+      ticket.messages.push({ id: crypto.randomUUID(), senderId: user.id, senderRole: user.role, body: message, createdAt: now });
+      ticket.updatedAt = now;
+      ticket.status = user.role === 'admin' ? 'answered' : 'open';
+      saveAccounts(accounts);
+      sendJson(response, 200, { ticket });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  const announcementReadMatch = url.pathname.match(/^\/api\/organizer\/announcements\/([0-9a-f-]{36})\/read$/i);
+  if (announcementReadMatch && request.method === 'POST') {
+    if (user?.role !== 'organizer') {
+      sendJson(response, user ? 403 : 401, { error: '運営者としてログインしてください' });
+      return;
+    }
+    const accounts = readAccounts();
+    const announcement = accounts.announcements.find((item) => item.id === announcementReadMatch[1]);
+    if (!announcement) {
+      sendJson(response, 404, { error: 'お知らせが見つかりません' });
+      return;
+    }
+    if (!announcement.seenBy.includes(user.id)) announcement.seenBy.push(user.id);
+    saveAccounts(accounts);
     sendJson(response, 200, { ok: true });
     return;
   }
@@ -532,7 +685,93 @@ const server = http.createServer((request, response) => {
         collaborationCount: races.filter((race) => (race.collaborationGroup?.memberIds || []).includes(id)).length,
       })),
       races: raceSummaries,
+      supportTickets: accounts.supportTickets
+        .map((ticket) => ({ ...ticket, organizer: accountLabel(accounts, ticket.organizerId) }))
+        .sort((left, right) => right.updatedAt - left.updatedAt),
+      announcements: accounts.announcements.slice().sort((left, right) => right.createdAt - left.createdAt),
     });
+    return;
+  }
+
+  if (url.pathname === '/api/admin/announcements' && request.method === 'POST') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then((body) => {
+      const title = String(body.title || '').trim().slice(0, 120);
+      const message = String(body.message || '').trim().slice(0, 3000);
+      if (!title || !message) {
+        sendJson(response, 400, { error: '件名とお知らせ内容を入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const announcement = {
+        id: crypto.randomUUID(),
+        title,
+        message,
+        authorId: user.id,
+        createdAt: Date.now(),
+        seenBy: [],
+      };
+      accounts.announcements.push(announcement);
+      saveAccounts(accounts);
+      sendJson(response, 201, {
+        announcement,
+        recipientCount: accounts.users.filter((item) => item.role === 'organizer').length,
+      });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  const supportStatusMatch = url.pathname.match(/^\/api\/admin\/support\/([0-9a-f-]{36})$/i);
+  if (supportStatusMatch && request.method === 'PATCH') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then((body) => {
+      if (!['open', 'answered', 'closed'].includes(body.status)) {
+        sendJson(response, 400, { error: '対応状況の値が正しくありません' });
+        return;
+      }
+      const accounts = readAccounts();
+      const ticket = accounts.supportTickets.find((item) => item.id === supportStatusMatch[1]);
+      if (!ticket) {
+        sendJson(response, 404, { error: 'お問い合わせが見つかりません' });
+        return;
+      }
+      ticket.status = body.status;
+      ticket.updatedAt = Date.now();
+      saveAccounts(accounts);
+      sendJson(response, 200, { ticket });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  const resetPasswordMatch = url.pathname.match(/^\/api\/admin\/organizers\/([0-9a-f-]{36})\/reset-password$/i);
+  if (resetPasswordMatch && request.method === 'POST') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    (async () => {
+      const accounts = readAccounts();
+      const organizer = accounts.users.find((item) => item.id === resetPasswordMatch[1] && item.role === 'organizer');
+      if (!organizer) {
+        sendJson(response, 404, { error: '運営者アカウントが見つかりません' });
+        return;
+      }
+      const temporaryPassword = crypto.randomBytes(12).toString('hex');
+      organizer.salt = crypto.randomBytes(16).toString('hex');
+      organizer.passwordHash = await passwordHash(temporaryPassword, organizer.salt);
+      organizer.mustChangePassword = true;
+      for (const [sessionId, session] of Object.entries(accounts.sessions)) {
+        if (session.userId === organizer.id) delete accounts.sessions[sessionId];
+      }
+      saveAccounts(accounts);
+      sendJson(response, 200, { temporaryPassword });
+    })().catch((error) => sendJson(response, 500, { error: error.message }));
     return;
   }
 

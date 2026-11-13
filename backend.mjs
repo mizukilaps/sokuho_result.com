@@ -98,7 +98,13 @@ function currentUser(state, tokenHash) {
   const session = state.accounts.sessions[tokenHash];
   if (!session || session.expiresAt <= Date.now()) return null;
   const user = state.accounts.users.find((item) => item.id === session.userId);
-  return user ? { id: user.id, name: user.name, email: user.email, role: user.role } : null;
+  return user ? {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    mustChangePassword: Boolean(user.mustChangePassword),
+  } : null;
 }
 
 function ownsRace(user, race) {
@@ -162,7 +168,32 @@ async function ensureAdmin(env) {
 
 async function initializeAdmin(env, email, password) {
   const { state } = await loadState(env);
-  if (state.accounts.users.some((user) => user.email === email && user.role === 'admin')) return;
+  const existingAdmin = state.accounts.users.find((user) => user.email === email && user.role === 'admin');
+  if (existingAdmin) {
+    const currentHash = await hashPassword(password, existingAdmin.salt, existingAdmin.hashIterations || PASSWORD_ITERATIONS);
+    if (secureEqual(currentHash, existingAdmin.passwordHash)) return;
+
+    const salt = randomHex(16);
+    const passwordHash = await hashPassword(password, salt);
+    await transact(env, (latest) => {
+      const latestAdmin = latest.accounts.users.find((user) => user.id === existingAdmin.id && user.role === 'admin');
+      if (!latestAdmin || latestAdmin.salt !== existingAdmin.salt || latestAdmin.passwordHash !== existingAdmin.passwordHash) {
+        throw new HttpError(409, '管理者アカウントが同時に更新されました。もう一度お試しください');
+      }
+      latestAdmin.salt = salt;
+      latestAdmin.passwordHash = passwordHash;
+      latestAdmin.hashIterations = PASSWORD_ITERATIONS;
+      for (const [sessionId, session] of Object.entries(latest.accounts.sessions)) {
+        if (session.userId === latestAdmin.id) delete latest.accounts.sessions[sessionId];
+      }
+      const updated = reply(200, {});
+      updated.changed = true;
+      return updated;
+    });
+    console.log('Administrator password synchronized');
+    return;
+  }
+
   const salt = randomHex(16);
   const passwordHash = await hashPassword(password, salt);
   const result = await transact(env, (latest) => {
@@ -204,6 +235,9 @@ async function routeApi(request, env, url, user, tokenHash) {
   const { pathname } = url;
 
   if (pathname === '/api/auth/me' && request.method === 'GET') return reply(200, { user });
+  if (user?.mustChangePassword && !['/api/auth/me', '/api/auth/logout', '/api/auth/password/change'].includes(pathname)) {
+    return reply(403, { error: '一時パスワードを変更してからご利用ください' });
+  }
 
   if (pathname === '/api/auth/register' && request.method === 'POST') {
     const body = await requestBody(request);
@@ -262,7 +296,13 @@ async function routeApi(request, env, url, user, tokenHash) {
       if (!latestUser) return reply(401, { error: 'メールアドレスまたはパスワードが違います' });
       latest.accounts.sessions[sessionId] = { userId: latestUser.id, expiresAt: Date.now() + SESSION_LIFETIME };
       const loggedIn = reply(200, {
-        user: { id: latestUser.id, name: latestUser.name, email, role: latestUser.role },
+        user: {
+          id: latestUser.id,
+          name: latestUser.name,
+          email,
+          role: latestUser.role,
+          mustChangePassword: Boolean(latestUser.mustChangePassword),
+        },
       }, { 'set-cookie': sessionCookie(request, token), 'x-sokuho-session': token });
       loggedIn.changed = true;
       return loggedIn;
@@ -283,7 +323,119 @@ async function routeApi(request, env, url, user, tokenHash) {
     return result;
   }
 
+  if (pathname === '/api/auth/password/change' && request.method === 'POST') {
+    if (user?.role !== 'organizer' || !user.mustChangePassword) {
+      return reply(statusForUser(user), { error: 'パスワード変更が必要な運営者のみ利用できます' });
+    }
+    const body = await requestBody(request);
+    const password = String(body.password || '');
+    if (password.length < 12) return reply(400, { error: '新しいパスワードは12文字以上にしてください' });
+    const salt = randomHex(16);
+    const passwordHash = await hashPassword(password, salt);
+    return transact(env, (state) => {
+      const session = state.accounts.sessions[tokenHash];
+      const organizer = state.accounts.users.find((item) => item.id === user.id && item.role === 'organizer');
+      if (!session || !organizer || !organizer.mustChangePassword) {
+        return reply(401, { error: 'ログイン状態を確認できません。もう一度ログインしてください' });
+      }
+      organizer.salt = salt;
+      organizer.passwordHash = passwordHash;
+      organizer.hashIterations = PASSWORD_ITERATIONS;
+      delete organizer.mustChangePassword;
+      for (const [sessionId, item] of Object.entries(state.accounts.sessions)) {
+        if (item.userId === organizer.id && sessionId !== tokenHash) delete state.accounts.sessions[sessionId];
+      }
+      const changed = reply(200, {
+        user: { id: organizer.id, name: organizer.name, email: organizer.email, role: organizer.role, mustChangePassword: false },
+      });
+      changed.changed = true;
+      return changed;
+    });
+  }
+
   if (pathname === '/api/time' && request.method === 'GET') return reply(200, { serverTime: Date.now() });
+
+  if (pathname === '/api/organizer/portal' && request.method === 'GET') {
+    if (user?.role !== 'organizer') return reply(statusForUser(user), { error: '運営者としてログインしてください' });
+    const { state } = await loadState(env);
+    return reply(200, {
+      supportTickets: (state.supportTickets || [])
+        .filter((ticket) => ticket.organizerId === user.id)
+        .sort((left, right) => right.updatedAt - left.updatedAt),
+      announcements: (state.announcements || [])
+        .map((item) => ({ ...item, seen: (item.seenBy || []).includes(user.id) }))
+        .sort((left, right) => right.createdAt - left.createdAt),
+    });
+  }
+
+  if (pathname === '/api/support' && request.method === 'POST') {
+    if (user?.role !== 'organizer') return reply(statusForUser(user), { error: 'お問い合わせには運営者ログインが必要です' });
+    const body = await requestBody(request);
+    const subject = String(body.subject || '').trim().slice(0, 120);
+    const message = String(body.message || '').trim().slice(0, 3000);
+    const type = body.type === 'password' ? 'password' : 'question';
+    if (!subject || !message) return reply(400, { error: '件名とお問い合わせ内容を入力してください' });
+    return transact(env, (state) => {
+      state.supportTickets ||= [];
+      const now = Date.now();
+      const ticket = {
+        id: crypto.randomUUID(),
+        organizerId: user.id,
+        type,
+        subject,
+        status: 'open',
+        messages: [{ id: crypto.randomUUID(), senderId: user.id, senderRole: 'organizer', body: message, createdAt: now }],
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.supportTickets.push(ticket);
+      const created = reply(201, { ticket });
+      created.changed = true;
+      return created;
+    });
+  }
+
+  const supportMessageMatch = pathname.match(/^\/api\/support\/([0-9a-f-]{36})\/messages$/i);
+  if (supportMessageMatch && request.method === 'POST') {
+    if (!user || !['organizer', 'admin'].includes(user.role)) return reply(statusForUser(user), { error: 'ログインしてください' });
+    const body = await requestBody(request);
+    const message = String(body.message || '').trim().slice(0, 3000);
+    if (!message) return reply(400, { error: '返信内容を入力してください' });
+    return transact(env, (state) => {
+      const ticket = (state.supportTickets || []).find((item) => item.id === supportMessageMatch[1]);
+      if (!ticket) return reply(404, { error: 'お問い合わせが見つかりません' });
+      if (user.role === 'organizer' && ticket.organizerId !== user.id) {
+        return reply(403, { error: 'このお問い合わせに返信する権限がありません' });
+      }
+      const now = Date.now();
+      ticket.messages.push({
+        id: crypto.randomUUID(),
+        senderId: user.id,
+        senderRole: user.role,
+        body: message,
+        createdAt: now,
+      });
+      ticket.updatedAt = now;
+      ticket.status = user.role === 'admin' ? 'answered' : 'open';
+      const updated = reply(200, { ticket });
+      updated.changed = true;
+      return updated;
+    });
+  }
+
+  const announcementReadMatch = pathname.match(/^\/api\/organizer\/announcements\/([0-9a-f-]{36})\/read$/i);
+  if (announcementReadMatch && request.method === 'POST') {
+    if (user?.role !== 'organizer') return reply(statusForUser(user), { error: '運営者としてログインしてください' });
+    return transact(env, (state) => {
+      const announcement = (state.announcements || []).find((item) => item.id === announcementReadMatch[1]);
+      if (!announcement) return reply(404, { error: 'お知らせが見つかりません' });
+      announcement.seenBy ||= [];
+      if (!announcement.seenBy.includes(user.id)) announcement.seenBy.push(user.id);
+      const seen = reply(200, { ok: true });
+      seen.changed = true;
+      return seen;
+    });
+  }
 
   if (pathname === '/api/admin/summary' && request.method === 'GET') {
     if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
@@ -308,6 +460,76 @@ async function routeApi(request, env, url, user, tokenHash) {
         collaborators: groupDetails(race, state.accounts)?.members || [],
         createdAt: race.createdAt,
       })),
+      supportTickets: (state.supportTickets || [])
+        .map((ticket) => ({
+          ...ticket,
+          organizer: accountLabel(state.accounts, ticket.organizerId),
+        }))
+        .sort((left, right) => right.updatedAt - left.updatedAt),
+      announcements: (state.announcements || []).slice().sort((left, right) => right.createdAt - left.createdAt),
+    });
+  }
+
+  if (pathname === '/api/admin/announcements' && request.method === 'POST') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    const title = String(body.title || '').trim().slice(0, 120);
+    const message = String(body.message || '').trim().slice(0, 3000);
+    if (!title || !message) return reply(400, { error: '件名とお知らせ内容を入力してください' });
+    return transact(env, (state) => {
+      state.announcements ||= [];
+      const announcement = {
+        id: crypto.randomUUID(),
+        title,
+        message,
+        authorId: user.id,
+        createdAt: Date.now(),
+        seenBy: [],
+      };
+      state.announcements.push(announcement);
+      const created = reply(201, { announcement, recipientCount: state.accounts.users.filter((item) => item.role === 'organizer').length });
+      created.changed = true;
+      return created;
+    });
+  }
+
+  const supportStatusMatch = pathname.match(/^\/api\/admin\/support\/([0-9a-f-]{36})$/i);
+  if (supportStatusMatch && request.method === 'PATCH') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    if (!['open', 'answered', 'closed'].includes(body.status)) {
+      return reply(400, { error: '対応状況の値が正しくありません' });
+    }
+    return transact(env, (state) => {
+      const ticket = (state.supportTickets || []).find((item) => item.id === supportStatusMatch[1]);
+      if (!ticket) return reply(404, { error: 'お問い合わせが見つかりません' });
+      ticket.status = body.status;
+      ticket.updatedAt = Date.now();
+      const updated = reply(200, { ticket });
+      updated.changed = true;
+      return updated;
+    });
+  }
+
+  const resetPasswordMatch = pathname.match(/^\/api\/admin\/organizers\/([0-9a-f-]{36})\/reset-password$/i);
+  if (resetPasswordMatch && request.method === 'POST') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const temporaryPassword = randomHex(12);
+    const salt = randomHex(16);
+    const passwordHash = await hashPassword(temporaryPassword, salt);
+    return transact(env, (state) => {
+      const organizer = state.accounts.users.find((item) => item.id === resetPasswordMatch[1] && item.role === 'organizer');
+      if (!organizer) return reply(404, { error: '運営者アカウントが見つかりません' });
+      organizer.salt = salt;
+      organizer.passwordHash = passwordHash;
+      organizer.hashIterations = PASSWORD_ITERATIONS;
+      organizer.mustChangePassword = true;
+      for (const [sessionId, session] of Object.entries(state.accounts.sessions)) {
+        if (session.userId === organizer.id) delete state.accounts.sessions[sessionId];
+      }
+      const reset = reply(200, { temporaryPassword });
+      reset.changed = true;
+      return reset;
     });
   }
 
