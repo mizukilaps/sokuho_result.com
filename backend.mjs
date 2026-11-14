@@ -410,8 +410,8 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
   }
 
   if (pathname === '/api/auth/password/change' && request.method === 'POST') {
-    if (user?.role !== 'organizer' || !user.mustChangePassword) {
-      return reply(statusForUser(user), { error: 'パスワード変更が必要な運営者のみ利用できます' });
+    if (!['organizer', 'admin'].includes(user?.role) || !user.mustChangePassword) {
+      return reply(statusForUser(user), { error: '一時パスワードの変更が必要なアカウントのみ利用できます' });
     }
     const body = await requestBody(request);
     const password = String(body.password || '');
@@ -420,19 +420,19 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
     const passwordHash = await hashPassword(password, salt);
     return transact(env, (state) => {
       const session = state.accounts.sessions[tokenHash];
-      const organizer = state.accounts.users.find((item) => item.id === user.id && item.role === 'organizer');
-      if (!session || !organizer || !organizer.mustChangePassword) {
+      const account = state.accounts.users.find((item) => item.id === user.id && item.role === user.role);
+      if (!session || !account || !account.mustChangePassword) {
         return reply(401, { error: 'ログイン状態を確認できません。もう一度ログインしてください' });
       }
-      organizer.salt = salt;
-      organizer.passwordHash = passwordHash;
-      organizer.hashIterations = PASSWORD_ITERATIONS;
-      delete organizer.mustChangePassword;
+      account.salt = salt;
+      account.passwordHash = passwordHash;
+      account.hashIterations = PASSWORD_ITERATIONS;
+      delete account.mustChangePassword;
       for (const [sessionId, item] of Object.entries(state.accounts.sessions)) {
-        if (item.userId === organizer.id && sessionId !== tokenHash) delete state.accounts.sessions[sessionId];
+        if (item.userId === account.id && sessionId !== tokenHash) delete state.accounts.sessions[sessionId];
       }
       const changed = reply(200, {
-        user: { id: organizer.id, name: organizer.name, email: organizer.email, role: organizer.role, mustChangePassword: false },
+        user: { id: account.id, name: account.name, email: account.email, role: account.role, mustChangePassword: false },
       });
       changed.changed = true;
       return changed;
@@ -594,9 +594,17 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
     if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
     const { state } = await loadState(env);
     const organizers = state.accounts.users.filter((item) => item.role === 'organizer');
+    const admins = state.accounts.users.filter((item) => item.role === 'admin');
     const races = Object.values(state.races);
     return reply(200, {
       admin: accountLabel(state.accounts, user.id),
+      admins: admins.map(({ id, name, email, createdAt }) => ({
+        id,
+        name,
+        email,
+        createdAt,
+        isPrimary: email === String(env.ADMIN_EMAIL || '').trim().toLowerCase(),
+      })),
       organizerCount: organizers.length,
       raceCount: races.length,
       organizers: organizers.map(({ id, name, email, createdAt }) => ({
@@ -666,6 +674,150 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
       if (!admin) return reply(404, { error: '管理者アカウントが見つかりません' });
       admin.name = name;
       const updated = reply(200, { admin: accountLabel(state.accounts, admin.id) });
+      updated.changed = true;
+      return updated;
+    });
+  }
+
+  if (pathname === '/api/admin/admins' && request.method === 'POST') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 80) : '';
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return reply(400, { error: '管理者名と正しいメールアドレスを入力してください' });
+    }
+    const temporaryPassword = randomHex(12);
+    const salt = randomHex(16);
+    const passwordHash = await hashPassword(temporaryPassword, salt);
+    return transact(env, (state) => {
+      if (state.accounts.users.some((item) => item.email.toLowerCase() === email)) {
+        return reply(409, { error: 'このメールアドレスは登録済みです' });
+      }
+      const admin = {
+        id: crypto.randomUUID(),
+        name,
+        email,
+        role: 'admin',
+        salt,
+        passwordHash,
+        hashIterations: PASSWORD_ITERATIONS,
+        mustChangePassword: true,
+        createdAt: Date.now(),
+      };
+      state.accounts.users.push(admin);
+      const created = reply(201, {
+        admin: { id: admin.id, name, email, createdAt: admin.createdAt, isPrimary: false },
+        temporaryPassword,
+      });
+      created.changed = true;
+      return created;
+    });
+  }
+
+  const adminMatch = pathname.match(/^\/api\/admin\/admins\/([0-9a-f-]{36})$/i);
+  if (adminMatch && request.method === 'PATCH') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 80) : '';
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return reply(400, { error: '管理者名と正しいメールアドレスを入力してください' });
+    }
+    return transact(env, (state) => {
+      const admin = state.accounts.users.find((item) => item.id === adminMatch[1] && item.role === 'admin');
+      if (!admin) return reply(404, { error: '管理者アカウントが見つかりません' });
+      const primaryEmail = String(env.ADMIN_EMAIL || '').trim().toLowerCase();
+      if (admin.email === primaryEmail && email !== admin.email) {
+        return reply(403, { error: '初期管理者のメールアドレスはGitHub Secretから変更してください' });
+      }
+      if (state.accounts.users.some((item) => item.id !== admin.id && item.email.toLowerCase() === email)) {
+        return reply(409, { error: 'このメールアドレスは登録済みです' });
+      }
+      const emailChanged = email !== admin.email;
+      admin.name = name;
+      admin.email = email;
+      if (emailChanged) {
+        for (const [sessionId, session] of Object.entries(state.accounts.sessions)) {
+          if (session.userId === admin.id && sessionId !== tokenHash) delete state.accounts.sessions[sessionId];
+        }
+      }
+      const updated = reply(200, {
+        admin: {
+          id: admin.id,
+          name: admin.name,
+          email: admin.email,
+          createdAt: admin.createdAt,
+          isPrimary: admin.email === primaryEmail,
+        },
+      });
+      updated.changed = true;
+      return updated;
+    });
+  }
+
+  if (pathname === '/api/admin/organizers' && request.method === 'POST') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 60) : '';
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return reply(400, { error: '運営者名と正しいメールアドレスを入力してください' });
+    }
+    const temporaryPassword = randomHex(12);
+    const salt = randomHex(16);
+    const passwordHash = await hashPassword(temporaryPassword, salt);
+    return transact(env, (state) => {
+      if (state.accounts.users.some((item) => item.email.toLowerCase() === email)) {
+        return reply(409, { error: 'このメールアドレスは登録済みです' });
+      }
+      const organizer = {
+        id: crypto.randomUUID(),
+        name,
+        email,
+        role: 'organizer',
+        salt,
+        passwordHash,
+        hashIterations: PASSWORD_ITERATIONS,
+        mustChangePassword: true,
+        createdAt: Date.now(),
+      };
+      state.accounts.users.push(organizer);
+      const created = reply(201, {
+        organizer: { id: organizer.id, name, email, createdAt: organizer.createdAt },
+        temporaryPassword,
+      });
+      created.changed = true;
+      return created;
+    });
+  }
+
+  const organizerUpdateMatch = pathname.match(/^\/api\/admin\/organizers\/([0-9a-f-]{36})$/i);
+  if (organizerUpdateMatch && request.method === 'PATCH') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 60) : '';
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return reply(400, { error: '運営者名と正しいメールアドレスを入力してください' });
+    }
+    return transact(env, (state) => {
+      const organizer = state.accounts.users.find((item) => item.id === organizerUpdateMatch[1] && item.role === 'organizer');
+      if (!organizer) return reply(404, { error: '運営者アカウントが見つかりません' });
+      if (state.accounts.users.some((item) => item.id !== organizer.id && item.email.toLowerCase() === email)) {
+        return reply(409, { error: 'このメールアドレスは登録済みです' });
+      }
+      const emailChanged = email !== organizer.email;
+      organizer.name = name;
+      organizer.email = email;
+      if (emailChanged) {
+        for (const [sessionId, session] of Object.entries(state.accounts.sessions)) {
+          if (session.userId === organizer.id) delete state.accounts.sessions[sessionId];
+        }
+      }
+      const updated = reply(200, {
+        organizer: { id: organizer.id, name: organizer.name, email: organizer.email, createdAt: organizer.createdAt },
+      });
       updated.changed = true;
       return updated;
     });
@@ -858,6 +1010,28 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
       return transact(env, (state) => {
         if (!state.races[raceMatch[1]]) return reply(404, { error: '大会が見つかりません' });
         delete state.races[raceMatch[1]];
+        const deleted = reply(200, { ok: true });
+        deleted.changed = true;
+        return deleted;
+      });
+    }
+    const adminMatch = pathname.match(/^\/api\/admin\/admins\/([0-9a-f-]{36})$/i);
+    if (adminMatch) {
+      return transact(env, (state) => {
+        const adminId = adminMatch[1];
+        const admin = state.accounts.users.find((item) => item.id === adminId && item.role === 'admin');
+        if (!admin) return reply(404, { error: '管理者アカウントが見つかりません' });
+        if (admin.id === user.id) return reply(409, { error: 'ログイン中の管理者は削除できません' });
+        if (admin.email === String(env.ADMIN_EMAIL || '').trim().toLowerCase()) {
+          return reply(403, { error: '初期管理者は削除できません' });
+        }
+        if (state.accounts.users.filter((item) => item.role === 'admin').length <= 1) {
+          return reply(409, { error: '最後の管理者は削除できません' });
+        }
+        state.accounts.users = state.accounts.users.filter((item) => item.id !== adminId);
+        for (const [sessionId, session] of Object.entries(state.accounts.sessions)) {
+          if (session.userId === adminId) delete state.accounts.sessions[sessionId];
+        }
         const deleted = reply(200, { ok: true });
         deleted.changed = true;
         return deleted;

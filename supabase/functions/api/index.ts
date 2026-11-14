@@ -46,7 +46,7 @@ function addCors(request: Request, response: Response): Response {
   const headers = new Headers(response.headers);
   if (permittedOrigin) {
     headers.set("access-control-allow-origin", permittedOrigin);
-    headers.set("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+    headers.set("access-control-allow-methods", "GET, POST, PATCH, DELETE, OPTIONS");
     headers.set("access-control-allow-headers", "apikey, authorization, content-type, x-sokuho-session");
     headers.set("access-control-expose-headers", "x-sokuho-session");
     headers.set("access-control-max-age", "86400");

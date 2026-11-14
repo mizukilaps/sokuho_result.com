@@ -66,6 +66,7 @@
     .race-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 9px; color: var(--muted); font-size: 12px; }
     .viewer-badge { display: inline-block; padding: 3px 8px; border: 1px solid #cfc5dc; color: var(--forest); font-size: 10px; font-weight: 800; }
     .head-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .refresh-status { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
     .stats { display: flex; gap: 26px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--line); }
     .stat { display: flex; align-items: baseline; gap: 7px; color: var(--muted); font-size: 11px; }
     .stat strong { color: var(--ink); font-size: 18px; font-variant-numeric: tabular-nums; }
@@ -388,6 +389,8 @@
     let editingEventId = null;
     let clockOffset = 0;
     let racePollTimer = null;
+    let manualRefreshInProgressFor = null;
+    let manualRefreshStatus = '';
     let routeToken = 0;
     let maintenanceActive = false;
     let maintenanceMessage = '';
@@ -627,8 +630,8 @@
       maintenanceActive = false;
       app.innerHTML = `
         <section class="intro dashboard-heading"><div><div class="eyebrow">DEVELOPER CONSOLE</div><h1>管理者ダッシュボード</h1><p class="intro-copy">ログイン中: ${escapeHtml(currentUser.email)}</p></div><button class="secondary" id="logout-button">ログアウト</button></section>
-        <div class="admin-layout"><aside class="admin-sidebar" aria-label="管理者メニュー"><h2>管理メニュー</h2><nav><a href="${pageUrl('/admin')}#admin-profile">ホーム・管理者情報</a><a href="${pageUrl('/admin')}#admin-maintenance">メンテナンス</a><a href="${pageUrl('/admin')}#admin-announcements">一斉お知らせ</a><a href="${pageUrl('/admin')}#admin-venues">会場</a><a href="${pageUrl('/admin')}#admin-venue-codes">会場コード一覧（PDF）</a><a href="${pageUrl('/admin')}#admin-venue-requests">会場申請</a><a href="${pageUrl('/admin')}#admin-support">お問い合わせ</a><a href="${pageUrl('/admin')}#admin-organizers">運営者</a><a href="${pageUrl('/admin')}#admin-races">大会</a><a href="${pageUrl('/admin')}#admin-audit">変更履歴</a></nav></aside><div class="admin-content">
-        <section class="admin-table admin-profile" id="admin-profile" data-admin-section="admin-profile"><h2>管理者情報</h2><section class="group-panel"><form id="admin-profile-form"><div class="field"><label for="admin-name">管理者名</label><input id="admin-name" name="name" required maxlength="80" value="${escapeHtml(summary.admin?.name || currentUser.name || '')}"></div><div class="field"><label for="admin-email">ログインメールアドレス</label><input id="admin-email" type="email" value="${escapeHtml(summary.admin?.email || currentUser.email)}" readonly><span class="hint">メールアドレスとパスワードはGitHub Actions Secretで管理されています。</span></div><p class="error" id="admin-profile-error" role="alert"></p><button class="primary" type="submit">管理者名を保存</button></form></section></section>
+        <div class="admin-layout"><aside class="admin-sidebar" aria-label="管理者メニュー"><h2>管理メニュー</h2><nav><a href="${pageUrl('/admin')}#admin-profile">ホーム・管理者情報</a><a href="${pageUrl('/admin')}#admin-maintenance">メンテナンス</a><a href="${pageUrl('/admin')}#admin-announcements">一斉お知らせ</a><a href="${pageUrl('/admin')}#admin-venues">会場</a><a href="${pageUrl('/admin')}#admin-venue-codes">会場コード一覧（PDF）</a><a href="${pageUrl('/admin')}#admin-venue-requests">会場申請</a><a href="${pageUrl('/admin')}#admin-support">お問い合わせ</a><a href="${pageUrl('/admin')}#admin-organizers">管理者・運営者</a><a href="${pageUrl('/admin')}#admin-races">大会</a><a href="${pageUrl('/admin')}#admin-audit">変更履歴</a></nav></aside><div class="admin-content">
+        <section class="admin-table admin-profile" id="admin-profile" data-admin-section="admin-profile"><h2>管理者情報</h2><section class="group-panel"><form id="admin-profile-form"><div class="field"><label for="admin-name">管理者名</label><input id="admin-name" name="name" required maxlength="80" value="${escapeHtml(summary.admin?.name || currentUser.name || '')}"></div><div class="field"><label for="admin-email">ログインメールアドレス</label><input id="admin-email" type="email" value="${escapeHtml(summary.admin?.email || currentUser.email)}" readonly><span class="hint">初期管理者のメールアドレスとパスワードはGitHub Actions Secretで管理します。追加管理者の名前・メールアドレスは「管理者・運営者」から編集できます。</span></div><p class="error" id="admin-profile-error" role="alert"></p><button class="primary" type="submit">管理者名を保存</button></form></section></section>
         <section class="admin-table" id="admin-maintenance" data-admin-section="admin-maintenance"><h2>メンテナンス設定</h2><section class="group-panel"><form id="maintenance-form"><label class="checkbox-field"><input name="enabled" type="checkbox" ${summary.maintenance.enabled ? 'checked' : ''}>メンテナンス中にする</label><div class="field"><label for="maintenance-message">運営者に表示する案内</label><textarea id="maintenance-message" name="message" maxlength="500" required>${escapeHtml(summary.maintenance.message)}</textarea></div><p class="hint">有効にすると運営者向けのデータ閲覧・編集・アカウント登録を停止し、案内を表示します。管理者機能と既存の公開速報の閲覧は継続します。この設定はアプリAPIの制御であり、Supabase Dashboard等からの直接アクセス権は変更しません。</p><p class="error" id="maintenance-error" role="alert"></p><button class="primary" type="submit">メンテナンス設定を保存</button></form></section></section>
         <section class="admin-table" id="admin-announcements" data-admin-section="admin-announcements"><h2>運営者への一斉お知らせ</h2><section class="group-panel"><form id="announcement-form"><div class="field"><label for="announcement-title">件名</label><input id="announcement-title" name="title" required maxlength="120"></div><div class="field"><label for="announcement-message">お知らせ内容</label><textarea id="announcement-message" name="message" required maxlength="3000"></textarea></div><label class="checkbox-field"><input name="important" type="checkbox">重要なお知らせとして扱う</label><p class="hint">重要にすると、運営者ページで赤ピンク色に強調し、未確認の間はログイン後にピックアップ表示します。</p><p class="error" id="announcement-error" role="alert"></p><button class="primary" type="submit">全運営者に掲載</button></form></section>
           ${summary.announcements.length ? `<div class="portal-list">${summary.announcements.map((item) => `<article class="portal-item ${item.important ? 'important-item' : ''}"><h3>${escapeHtml(item.title)}${item.important ? '<span class="important-label">重要</span>' : ''}</h3><div class="portal-meta">${new Date(item.createdAt).toLocaleString('ja-JP')} ・ 確認 ${item.seenBy.length}/${summary.organizerCount}名</div><p>${escapeHtml(item.message)}</p></article>`).join('')}</div>` : ''}
@@ -637,7 +640,7 @@
         <section class="admin-table" id="admin-venue-codes" data-admin-section="admin-venue-codes"><div class="group-panel-head"><div><h2>会場コード一覧</h2><p class="hint">速報アプリ独自の会場識別コード一覧です。JAAF公式コードではありません。</p></div><button class="secondary no-print" id="print-venue-codes" type="button">印刷・PDF保存</button></div>${summary.venues.length ? `<div class="table-wrap"><table><thead><tr><th>速報アプリ独自コード</th><th>国</th><th>所在地</th><th>会場名</th><th>住所</th></tr></thead><tbody>${summary.venues.map((venue) => `<tr><td class="venue-code">${escapeHtml(venue.sokuhoCode)}</td><td>${escapeHtml(venue.country || '未設定')}</td><td>${escapeHtml(venue.location || '—')}</td><td>${escapeHtml(venue.name)}</td><td>${escapeHtml(venue.address || '—')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">登録済みの会場はありません。</div>'}</section>
         <section class="admin-table" id="admin-venue-requests" data-admin-section="admin-venue-requests"><h2>会場登録申請</h2>${summary.venueRequests.length ? `<div class="portal-list">${summary.venueRequests.map((item) => `<article class="portal-item"><h3>${escapeHtml(item.country)} ・ ${escapeHtml(item.name)} <span class="status-label">${venueRequestStatusLabel(item.status)}</span></h3><div class="portal-meta">${escapeHtml(item.organizer?.name || '削除済み運営者')} ・ ${escapeHtml(item.organizer?.email || '')} ・ ${escapeHtml(item.raceTitle)} ・ ${new Date(item.createdAt).toLocaleString('ja-JP')}</div><p>所在地: ${escapeHtml(item.location)}</p><p>申請理由: ${escapeHtml(item.reason)}</p><p><a href="${escapeHtml(item.website)}" target="_blank" rel="noopener noreferrer">提出された公式情報を確認</a></p>${item.status === 'pending' ? `<form class="venue-review-form" data-request-id="${item.id}"><div class="field"><label for="venue-review-note-${item.id}">審査メモ（却下時は理由を必須入力）</label><textarea id="venue-review-note-${item.id}" name="adminNote" maxlength="1000"></textarea></div><p class="error" role="alert"></p><div class="portal-actions"><button class="primary" type="submit" name="status" value="approved">承認して会場登録</button><button class="danger" type="submit" name="status" value="rejected">却下</button></div></form>` : `<div class="portal-message admin-message">審査結果: ${venueRequestStatusLabel(item.status)}${item.adminNote ? `<br>管理者からの回答: ${escapeHtml(item.adminNote)}` : ''}</div>`}</article>`).join('')}</div>` : '<div class="empty">会場申請はありません。</div>'}</section>
         <section class="admin-table" id="admin-support" data-admin-section="admin-support"><h2>お問い合わせ・パスワード変更依頼</h2>${oneTimePassword ? `<section class="group-panel"><h3>一時パスワード（今回のみ表示）</h3><p>${escapeHtml(oneTimePassword.name)} ・ ${escapeHtml(oneTimePassword.email)}</p><p><strong>${escapeHtml(oneTimePassword.password)}</strong></p><p class="hint">このパスワードは保存されません。本人確認のうえ、安全な別経路で本人に伝えてください。本人はログイン後、新しいパスワードへの変更が必要です。</p><button class="secondary" data-dismiss-reset-password>表示を閉じる</button></section>` : ''}${summary.supportTickets.length ? `<div class="portal-list">${summary.supportTickets.map((ticket) => `<article class="portal-item"><h3>${escapeHtml(ticket.subject)} <span class="status-label">${ticket.status === 'open' ? '対応中' : ticket.status === 'answered' ? '返信あり' : '完了'}</span></h3><div class="portal-meta">${escapeHtml(ticket.organizer?.name || '削除済みアカウント')} ・ ${escapeHtml(ticket.organizer?.email || '')} ・ ${ticket.type === 'password' ? 'パスワード変更依頼' : 'お問い合わせ'} ・ ${new Date(ticket.updatedAt).toLocaleString('ja-JP')}</div>${ticket.messages.map((item) => `<div class="portal-message ${item.senderRole === 'admin' ? 'admin-message' : ''}"><strong>${item.senderRole === 'admin' ? '管理者' : '運営者'} ・ ${new Date(item.createdAt).toLocaleString('ja-JP')}</strong><br>${escapeHtml(item.body)}</div>`).join('')}<form class="admin-ticket-reply-form" data-ticket-id="${ticket.id}"><div class="field"><label>返信</label><textarea name="message" required maxlength="3000"></textarea></div><div class="portal-actions"><button class="secondary" type="submit">返信する</button><select data-ticket-status="${ticket.id}" aria-label="対応状況"><option value="open" ${ticket.status === 'open' ? 'selected' : ''}>対応中</option><option value="answered" ${ticket.status === 'answered' ? 'selected' : ''}>返信あり</option><option value="closed" ${ticket.status === 'closed' ? 'selected' : ''}>完了</option></select><button class="secondary" type="button" data-save-ticket-status="${ticket.id}">状況を保存</button>${ticket.type === 'password' && ticket.organizer ? `<button class="danger" type="button" data-reset-password="${ticket.organizer.id}" data-organizer-name="${escapeHtml(ticket.organizer.name)}" data-organizer-email="${escapeHtml(ticket.organizer.email)}">一時パスワードを発行</button>` : ''}</div></form></article>`).join('')}</div>` : '<div class="empty">お問い合わせはまだありません。</div>'}</section>
-        <section class="admin-table" id="admin-organizers" data-admin-section="admin-organizers"><h2>運営者アカウント</h2>${oneTimePassword ? `<section class="group-panel"><h3>一時パスワード（今回のみ表示）</h3><p>${escapeHtml(oneTimePassword.name)} ・ ${escapeHtml(oneTimePassword.email)}</p><p><strong>${escapeHtml(oneTimePassword.password)}</strong></p><p class="hint">このパスワードは保存されません。本人確認のうえ、安全な別経路で本人に伝えてください。本人はログイン後、新しいパスワードへの変更が必要です。</p><button class="secondary" data-dismiss-reset-password>表示を閉じる</button></section>` : ''}${summary.organizers.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>主催大会</th><th>共同参加</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.organizers.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}</td><td data-label="主催大会">${item.ownedRaceCount}</td><td data-label="共同参加">${item.collaborationCount}</td><td data-label="登録日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="操作"><button class="secondary" data-reset-password="${item.id}" data-organizer-name="${escapeHtml(item.name)}" data-organizer-email="${escapeHtml(item.email)}">一時PW発行</button> <button class="danger" data-delete-organizer="${item.id}" data-organizer-name="${escapeHtml(item.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">運営者はまだ登録されていません。</div>'}</section>
+        <section class="admin-table" id="admin-organizers" data-admin-section="admin-organizers"><h2>管理者・運営者アカウント</h2>${oneTimePassword ? `<section class="group-panel"><h3>一時パスワード（今回のみ表示）</h3><p>${escapeHtml(oneTimePassword.name)} ・ ${escapeHtml(oneTimePassword.email)}</p><p><strong>${escapeHtml(oneTimePassword.password)}</strong></p><p class="hint">このパスワードは保存されません。本人確認のうえ、安全な別経路で本人に伝えてください。本人は初回ログイン後にパスワード変更が必要です。</p><button class="secondary" data-dismiss-reset-password>表示を閉じる</button></section>` : ''}<section class="group-panel"><h3>管理者を追加</h3><form id="create-admin-form" class="account-create-form"><div class="field-grid"><div class="field"><label for="new-admin-name">管理者名</label><input id="new-admin-name" name="name" required maxlength="80"></div><div class="field"><label for="new-admin-email">メールアドレス</label><input id="new-admin-email" name="email" type="email" required maxlength="254"></div></div><p class="error" role="alert"></p><button class="primary" type="submit">管理者を追加</button></form><p class="hint">初期管理者はGitHub Secretで管理され、この画面からメール変更・削除できません。追加した管理者には一時パスワードが発行され、初回ログイン時に変更が必要です。</p></section><section class="group-panel"><h3>運営者を追加</h3><form id="create-organizer-form" class="account-create-form"><div class="field-grid"><div class="field"><label for="new-organizer-name">運営者名</label><input id="new-organizer-name" name="name" required maxlength="60"></div><div class="field"><label for="new-organizer-email">メールアドレス</label><input id="new-organizer-email" name="email" type="email" required maxlength="254"></div></div><p class="error" role="alert"></p><button class="primary" type="submit">運営者を追加</button></form></section><h3>管理者一覧</h3>${summary.admins.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.admins.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}${item.isPrimary ? '<br><span class="hint">初期管理者・Secret管理</span>' : ''}</td><td data-label="登録日">${item.createdAt ? new Date(item.createdAt).toLocaleDateString('ja-JP') : '—'}</td><td data-label="操作"><button class="secondary" data-edit-admin="${item.id}" data-account-name="${escapeHtml(item.name)}" data-account-email="${escapeHtml(item.email)}">編集</button>${item.isPrimary ? '' : ` <button class="danger" data-delete-admin="${item.id}" data-account-name="${escapeHtml(item.name)}">削除</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">管理者はまだ登録されていません。</div>'}<h3>運営者一覧</h3>${summary.organizers.length ? `<div class="table-wrap"><table><thead><tr><th>名前</th><th>メールアドレス</th><th>主催大会</th><th>共同参加</th><th>登録日</th><th>操作</th></tr></thead><tbody>${summary.organizers.map((item) => `<tr><td class="athlete-name" data-label="名前">${escapeHtml(item.name)}</td><td data-label="メールアドレス">${escapeHtml(item.email)}</td><td data-label="主催大会">${item.ownedRaceCount}</td><td data-label="共同参加">${item.collaborationCount}</td><td data-label="登録日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td data-label="操作"><button class="secondary" data-edit-organizer="${item.id}" data-account-name="${escapeHtml(item.name)}" data-account-email="${escapeHtml(item.email)}">編集</button> <button class="secondary" data-reset-password="${item.id}" data-organizer-name="${escapeHtml(item.name)}" data-organizer-email="${escapeHtml(item.email)}">一時PW発行</button> <button class="danger" data-delete-organizer="${item.id}" data-organizer-name="${escapeHtml(item.name)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">運営者はまだ登録されていません。</div>'}</section>
         <section class="admin-table" id="admin-races" data-admin-section="admin-races"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>速報URL</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td class="race-url" data-label="速報URL"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">${escapeHtml(new URL(pageUrl(item.publicPath), location.origin).href)}</a><br><button class="secondary" type="button" data-copy-race-url="${item.id}">URLをコピー</button></td><td data-label="大会"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>
         <section class="admin-table" id="admin-audit" data-admin-section="admin-audit"><h2>競技情報の変更履歴</h2>${summary.auditLog.length ? `<div class="portal-list">${summary.auditLog.map((entry) => `<article class="audit-entry"><h3>${entry.action === 'event_order_changed' ? '競技順を変更' : '競技・選手・記録を編集'}</h3><div class="portal-meta">${escapeHtml(entry.raceTitle || '大会')} ・ ${escapeHtml(entry.actor?.name || '削除済み運営者')} ・ ${new Date(entry.createdAt).toLocaleString('ja-JP')}</div><details><summary>変更前・変更後を表示</summary><strong>変更前</strong><pre>${escapeHtml(auditSnapshotSummary(entry.before))}</pre><strong>変更後</strong><pre>${escapeHtml(auditSnapshotSummary(entry.after))}</pre></details></article>`).join('')}</div>` : '<div class="empty">競技情報の変更履歴はまだありません。</div>'}</section></div></div>`;
       document.querySelector('#edit-un-member-countries').innerHTML = countryOptionsMarkup(summary.countryCodes);
@@ -645,6 +648,8 @@
       animatePage(animate);
       document.querySelector('#logout-button').addEventListener('click', logout);
       document.querySelector('#admin-profile-form').addEventListener('submit', submitAdminProfile);
+      document.querySelector('#create-admin-form').addEventListener('submit', submitAccountCreate);
+      document.querySelector('#create-organizer-form').addEventListener('submit', submitAccountCreate);
       document.querySelector('#maintenance-form').addEventListener('submit', submitMaintenance);
       document.querySelector('#announcement-form').addEventListener('submit', submitAnnouncement);
       document.querySelector('#venue-form').addEventListener('submit', submitVenue);
@@ -664,6 +669,15 @@
       });
       document.querySelectorAll('[data-delete-organizer]').forEach((button) => {
         button.addEventListener('click', () => deleteAdminItem('organizers', button.dataset.deleteOrganizer, button.dataset.organizerName));
+      });
+      document.querySelectorAll('[data-edit-admin]').forEach((button) => {
+        button.addEventListener('click', () => editAccount('admins', button.dataset.editAdmin, button.dataset.accountName, button.dataset.accountEmail));
+      });
+      document.querySelectorAll('[data-edit-organizer]').forEach((button) => {
+        button.addEventListener('click', () => editAccount('organizers', button.dataset.editOrganizer, button.dataset.accountName, button.dataset.accountEmail));
+      });
+      document.querySelectorAll('[data-delete-admin]').forEach((button) => {
+        button.addEventListener('click', () => deleteAdminItem('admins', button.dataset.deleteAdmin, button.dataset.accountName));
       });
       document.querySelectorAll('[data-delete-race]').forEach((button) => {
         button.addEventListener('click', () => deleteAdminItem('races', button.dataset.deleteRace, button.dataset.raceTitle));
@@ -940,9 +954,52 @@
       }
     }
 
+    async function submitAccountCreate(event) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const formData = new FormData(form);
+      const type = form.id === 'create-admin-form' ? 'admins' : 'organizers';
+      const name = String(formData.get('name') || '').trim();
+      const email = String(formData.get('email') || '').trim();
+      const error = form.querySelector('[role="alert"]');
+      error.textContent = '';
+      try {
+        const result = await request(`/api/admin/${type}`, {
+          method: 'POST',
+          body: JSON.stringify({ name, email }),
+        });
+        oneTimePassword = { name, email, password: result.temporaryPassword };
+        form.reset();
+        await refreshAdmin();
+      } catch (failure) {
+        error.textContent = failure.message;
+      }
+    }
+
+    async function editAccount(type, id, name, email) {
+      const updatedName = window.prompt('名前を入力してください', name);
+      if (updatedName === null) return;
+      const updatedEmail = window.prompt('メールアドレスを入力してください', email);
+      if (updatedEmail === null) return;
+      try {
+        const result = await request(`/api/admin/${type}/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name: updatedName, email: updatedEmail }),
+        });
+        if (type === 'admins' && currentUser.id === id) {
+          currentUser = { ...currentUser, name: result.admin.name, email: result.admin.email };
+        }
+        await refreshAdmin();
+      } catch (failure) {
+        window.alert(failure.message);
+      }
+    }
+
     async function deleteAdminItem(type, id, label) {
       const message = type === 'organizers'
         ? `運営者「${label}」のアカウントを削除します。所有する大会と記録もすべて削除されます。この操作は取り消せません。よろしいですか？`
+        : type === 'admins'
+          ? `管理者「${label}」のアカウントとログイン中のセッションを削除します。よろしいですか？`
         : type === 'venues'
           ? `会場「${label}」を候補一覧から削除します。作成済み大会の会場名は変更されません。よろしいですか？`
           : `大会「${label}」と登録済みの競技・記録を削除します。この操作は取り消せません。よろしいですか？`;
@@ -1139,7 +1196,7 @@
           renderMaintenanceNotice(maintenance.message, animate);
           return;
         }
-        if (currentUser.role === 'organizer' && currentUser.mustChangePassword) {
+        if (currentUser.mustChangePassword) {
           renderPasswordChange(animate);
           return;
         }
@@ -1261,7 +1318,8 @@
       app.innerHTML = `
         ${maintenanceActive ? `<section class="maintenance-banner"><strong>メンテナンス中です</strong><p>${escapeHtml(maintenanceMessage)}</p><p>公開速報は閲覧できます。運営者向けの操作は停止中です。</p></section>` : ''}
         <section class="race-head">
-          <div class="race-heading"><div><div class="eyebrow">大会速報</div><h1>${escapeHtml(race.title)}</h1><div class="race-meta"><span>${escapeHtml(race.date || '開催日未設定')}</span><span>${escapeHtml(race.venue || '会場未設定')}</span>${canManage ? '' : '<span class="viewer-badge">閲覧専用</span>'}</div></div><div class="head-actions">${canManage ? '<button class="secondary" id="dashboard-button">運営者ページ</button>' : ''}<button class="secondary" id="share-button">共有URLをコピー</button></div></div>
+          <div class="race-heading"><div><div class="eyebrow">大会速報</div><h1>${escapeHtml(race.title)}</h1><div class="race-meta"><span>${escapeHtml(race.date || '開催日未設定')}</span><span>${escapeHtml(race.venue || '会場未設定')}</span>${canManage ? '' : '<span class="viewer-badge">閲覧専用</span>'}</div></div><div class="head-actions">${canManage ? '<button class="secondary" id="dashboard-button">運営者ページ</button>' : `<button class="secondary" id="refresh-race" type="button" ${manualRefreshInProgressFor === race.id ? 'disabled' : ''}>速報を更新</button>`}<button class="secondary" id="share-button">共有URLをコピー</button></div></div>
+          ${canManage ? '' : `<p class="refresh-status" id="manual-refresh-status" role="status" aria-live="polite">${escapeHtml(manualRefreshStatus || '自動更新中（約15秒間隔）')}</p>`}
           <div class="stats"><div class="stat"><strong>${race.events.length}</strong>競技</div><div class="stat"><strong>${event ? selectedAthletes.length : 0}</strong>出走</div><div class="stat"><strong>${finishedCount}</strong>記録</div></div>
         </section>
         ${renderGroupPanel()}
@@ -1295,10 +1353,50 @@
         history.pushState({}, '', pageUrl('/'));
         showHome(true);
       });
+      document.querySelector('#refresh-race')?.addEventListener('click', refreshRaceSnapshot);
       document.querySelector('#start-button')?.addEventListener('click', () => recordTime('start'));
       document.querySelectorAll('[data-finish]').forEach((button) => {
         button.addEventListener('click', () => recordTime('finish', button.dataset.finish));
       });
+    }
+
+    async function refreshRaceSnapshot() {
+      if (!race || manualRefreshInProgressFor === race.id) return;
+      const raceId = race.id;
+      manualRefreshInProgressFor = raceId;
+      manualRefreshStatus = '速報を更新しています…';
+      const status = document.querySelector('#manual-refresh-status');
+      if (status) status.textContent = manualRefreshStatus;
+      const button = document.querySelector('#refresh-race');
+      if (button) button.disabled = true;
+      try {
+        const snapshot = await request(`/api/races/${encodeURIComponent(raceId)}/snapshot`);
+        if (race?.id !== raceId) return;
+        const previousEventId = selectedEventId;
+        race = snapshot.race;
+        raceAccess = snapshot.access;
+        currentGroup = snapshot.group;
+        selectedEventId = race.events.some((item) => item.id === previousEventId)
+          ? previousEventId
+          : race.events[0]?.id || null;
+        manualRefreshStatus = `更新済み ${new Date().toLocaleTimeString('ja-JP')}`;
+        renderRace();
+      } catch (failure) {
+        if (race?.id !== raceId) return;
+        if (failure.message === '大会が見つかりません') {
+          app.innerHTML = '<div class="empty"><strong>この大会は削除されました</strong>大会運営者に新しい速報URLをご確認ください。</div>';
+          return;
+        }
+        manualRefreshStatus = `更新できませんでした: ${failure.message}`;
+      } finally {
+        if (manualRefreshInProgressFor === raceId) manualRefreshInProgressFor = null;
+        if (race?.id === raceId) {
+          const currentButton = document.querySelector('#refresh-race');
+          if (currentButton) currentButton.disabled = false;
+          const currentStatus = document.querySelector('#manual-refresh-status');
+          if (currentStatus) currentStatus.textContent = manualRefreshStatus;
+        }
+      }
     }
 
     async function recordTime(action, athleteId) {

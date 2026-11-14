@@ -448,6 +448,109 @@ test('admins can manage UN-member country venues and review organizer venue requ
   }, adminSession, 'PATCH')).status, 200);
 });
 
+test('admins can manage admin and organizer accounts with protected primary access', async () => {
+  const { default: backend } = await import('./backend.mjs?admin-account-management');
+  let version = 0;
+  let state = { races: {}, accounts: { users: [], sessions: {} } };
+  const DB = {
+    async load() {
+      return { version, state: structuredClone(state) };
+    },
+    async compareAndSwap(expectedVersion, nextState) {
+      if (expectedVersion !== version) return false;
+      state = structuredClone(nextState);
+      version += 1;
+      return true;
+    },
+  };
+  const env = { DB, ADMIN_EMAIL: 'admin@example.com', ADMIN_PASSWORD: 'admin-password-123' };
+  const request = async (path, body, session, method = body ? 'POST' : 'GET') => backend.fetch(new Request(`https://example.test${path}`, {
+    method,
+    headers: {
+      ...(body ? { 'content-type': 'application/json' } : {}),
+      ...(session ? { 'x-sokuho-session': session } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  }), env);
+  const json = async (response) => response.json();
+
+  await request('/api/auth/me');
+  const login = await request('/api/auth/login', {
+    email: env.ADMIN_EMAIL,
+    password: env.ADMIN_PASSWORD,
+    expectedRole: 'admin',
+  });
+  const adminSession = login.headers.get('x-sokuho-session');
+
+  const createAdminResponse = await request('/api/admin/admins', {
+    name: '管理者2',
+    email: 'ADMIN2@example.com',
+  }, adminSession);
+  const { admin, temporaryPassword: adminTemporaryPassword } = await json(createAdminResponse);
+  assert.equal(createAdminResponse.status, 201);
+  assert.equal(admin.email, 'admin2@example.com');
+  assert.equal(admin.isPrimary, false);
+  assert.equal(adminTemporaryPassword.length, 24);
+  assert.equal((await request('/api/admin/admins', {
+    name: '重複',
+    email: 'ADMIN2@example.com',
+  }, adminSession)).status, 409);
+
+  const newAdminLogin = await request('/api/auth/login', {
+    email: admin.email,
+    password: adminTemporaryPassword,
+    expectedRole: 'admin',
+  });
+  const newAdminSession = newAdminLogin.headers.get('x-sokuho-session');
+  assert.equal((await json(newAdminLogin)).user.mustChangePassword, true);
+  assert.equal((await request('/api/admin/summary', undefined, newAdminSession)).status, 403);
+  assert.equal((await request('/api/auth/password/change', {
+    password: 'additional-admin-password-456',
+  }, newAdminSession)).status, 200);
+  assert.equal((await request('/api/admin/summary', undefined, newAdminSession)).status, 200);
+
+  const adminEditResponse = await request(`/api/admin/admins/${admin.id}`, {
+    name: '管理者2更新',
+    email: 'updated-admin@example.com',
+  }, adminSession, 'PATCH');
+  assert.equal(adminEditResponse.status, 200);
+  assert.equal((await json(adminEditResponse)).admin.email, 'updated-admin@example.com');
+  assert.equal((await json(await request('/api/auth/me', undefined, newAdminSession))).user, null);
+  const updatedAdminLogin = await request('/api/auth/login', {
+    email: 'updated-admin@example.com',
+    password: 'additional-admin-password-456',
+    expectedRole: 'admin',
+  });
+  assert.equal(updatedAdminLogin.status, 200);
+  const updatedAdminSession = updatedAdminLogin.headers.get('x-sokuho-session');
+  const primaryId = (await json(await request('/api/admin/summary', undefined, adminSession))).admins
+    .find((item) => item.isPrimary).id;
+  assert.equal((await request(`/api/admin/admins/${primaryId}`, undefined, updatedAdminSession, 'DELETE')).status, 403);
+  assert.equal((await request(`/api/admin/admins/${admin.id}`, undefined, adminSession, 'DELETE')).status, 200);
+  assert.equal((await json(await request('/api/auth/me', undefined, newAdminSession))).user, null);
+
+  const createOrganizerResponse = await request('/api/admin/organizers', {
+    name: '運営者2',
+    email: 'organizer2@example.com',
+  }, adminSession);
+  const { organizer, temporaryPassword: organizerTemporaryPassword } = await json(createOrganizerResponse);
+  assert.equal(createOrganizerResponse.status, 201);
+  const organizerLogin = await request('/api/auth/login', {
+    email: organizer.email,
+    password: organizerTemporaryPassword,
+    expectedRole: 'organizer',
+  });
+  const organizerSession = organizerLogin.headers.get('x-sokuho-session');
+  assert.equal((await json(organizerLogin)).user.mustChangePassword, true);
+  const organizerEditResponse = await request(`/api/admin/organizers/${organizer.id}`, {
+    name: '運営者2更新',
+    email: 'organizer2-updated@example.com',
+  }, adminSession, 'PATCH');
+  assert.equal(organizerEditResponse.status, 200);
+  assert.equal((await json(await request('/api/auth/me', undefined, organizerSession))).user, null);
+  assert.equal((await request(`/api/admin/organizers/${organizer.id}`, undefined, adminSession, 'DELETE')).status, 200);
+});
+
 test('maintenance blocks organizer APIs while preserving public race access and admin controls', async () => {
   const { default: backend } = await import('./backend.mjs?maintenance-mode');
   let version = 0;

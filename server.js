@@ -726,8 +726,8 @@ const server = http.createServer((request, response) => {
   }
 
   if (url.pathname === '/api/auth/password/change' && request.method === 'POST') {
-    if (user?.role !== 'organizer' || !user.mustChangePassword) {
-      sendJson(response, user ? 403 : 401, { error: 'パスワード変更が必要な運営者のみ利用できます' });
+    if (!['organizer', 'admin'].includes(user?.role) || !user.mustChangePassword) {
+      sendJson(response, user ? 403 : 401, { error: '一時パスワードの変更が必要なアカウントのみ利用できます' });
       return;
     }
     readBody(request).then(async (body) => {
@@ -737,22 +737,22 @@ const server = http.createServer((request, response) => {
         return;
       }
       const accounts = readAccounts();
-      const organizer = accounts.users.find((item) => item.id === user.id && item.role === 'organizer');
+      const account = accounts.users.find((item) => item.id === user.id && item.role === user.role);
       const token = cookieMap(request).sokuho_session;
       const tokenHash = token && crypto.createHash('sha256').update(token).digest('hex');
-      if (!organizer?.mustChangePassword || !accounts.sessions[tokenHash]) {
+      if (!account?.mustChangePassword || !accounts.sessions[tokenHash]) {
         sendJson(response, 401, { error: 'ログイン状態を確認できません。もう一度ログインしてください' });
         return;
       }
-      organizer.salt = crypto.randomBytes(16).toString('hex');
-      organizer.passwordHash = await passwordHash(password, organizer.salt);
-      delete organizer.mustChangePassword;
+      account.salt = crypto.randomBytes(16).toString('hex');
+      account.passwordHash = await passwordHash(password, account.salt);
+      delete account.mustChangePassword;
       for (const [sessionId, session] of Object.entries(accounts.sessions)) {
-        if (session.userId === organizer.id && sessionId !== tokenHash) delete accounts.sessions[sessionId];
+        if (session.userId === account.id && sessionId !== tokenHash) delete accounts.sessions[sessionId];
       }
       saveAccounts(accounts);
       sendJson(response, 200, {
-        user: { id: organizer.id, name: organizer.name, email: organizer.email, role: organizer.role, mustChangePassword: false },
+        user: { id: account.id, name: account.name, email: account.email, role: account.role, mustChangePassword: false },
       });
     }).catch((error) => sendJson(response, 400, { error: error.message }));
     return;
@@ -935,6 +935,7 @@ const server = http.createServer((request, response) => {
     }
     const accounts = readAccounts();
     const organizers = accounts.users.filter((item) => item.role === 'organizer');
+    const admins = accounts.users.filter((item) => item.role === 'admin');
     const racesById = readRaces();
     const races = Object.values(racesById);
     const raceSummaries = races.map((race) => ({
@@ -947,6 +948,13 @@ const server = http.createServer((request, response) => {
     }));
     sendJson(response, 200, {
       admin: accountLabel(accounts, user.id),
+      admins: admins.map(({ id, name, email, createdAt }) => ({
+        id,
+        name,
+        email,
+        createdAt,
+        isPrimary: email === String(process.env.ADMIN_EMAIL || '').trim().toLowerCase(),
+      })),
       organizerCount: organizers.length,
       raceCount: races.length,
       organizers: organizers.map(({ id, name, email, createdAt }) => ({
@@ -1023,6 +1031,177 @@ const server = http.createServer((request, response) => {
       admin.name = name;
       saveAccounts(accounts);
       sendJson(response, 200, { admin: accountLabel(accounts, admin.id) });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  if (url.pathname === '/api/admin/admins' && request.method === 'POST') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then(async (body) => {
+      const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 80) : '';
+      const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+      if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        sendJson(response, 400, { error: '管理者名と正しいメールアドレスを入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      if (accounts.users.some((item) => item.email.toLowerCase() === email)) {
+        sendJson(response, 409, { error: 'このメールアドレスは登録済みです' });
+        return;
+      }
+      const id = crypto.randomUUID();
+      const temporaryPassword = crypto.randomBytes(12).toString('hex');
+      const salt = crypto.randomBytes(16).toString('hex');
+      const admin = {
+        id,
+        name,
+        email,
+        role: 'admin',
+        salt,
+        passwordHash: await passwordHash(temporaryPassword, salt),
+        mustChangePassword: true,
+        createdAt: Date.now(),
+      };
+      accounts.users.push(admin);
+      saveAccounts(accounts);
+      sendJson(response, 201, {
+        admin: { id, name, email, createdAt: admin.createdAt, isPrimary: false },
+        temporaryPassword,
+      });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  const adminEditMatch = url.pathname.match(/^\/api\/admin\/admins\/([0-9a-f-]{36})$/i);
+  if (adminEditMatch && request.method === 'PATCH') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then((body) => {
+      const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 80) : '';
+      const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+      if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        sendJson(response, 400, { error: '管理者名と正しいメールアドレスを入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const admin = accounts.users.find((item) => item.id === adminEditMatch[1] && item.role === 'admin');
+      if (!admin) {
+        sendJson(response, 404, { error: '管理者アカウントが見つかりません' });
+        return;
+      }
+      const primaryEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+      if (admin.email === primaryEmail && email !== admin.email) {
+        sendJson(response, 403, { error: '初期管理者のメールアドレスは環境変数から変更してください' });
+        return;
+      }
+      if (accounts.users.some((item) => item.id !== admin.id && item.email.toLowerCase() === email)) {
+        sendJson(response, 409, { error: 'このメールアドレスは登録済みです' });
+        return;
+      }
+      const emailChanged = email !== admin.email;
+      admin.name = name;
+      admin.email = email;
+      if (emailChanged) {
+        const token = cookieMap(request).sokuho_session;
+        const currentSessionId = token && crypto.createHash('sha256').update(token).digest('hex');
+        for (const [sessionId, session] of Object.entries(accounts.sessions)) {
+          if (session.userId === admin.id && sessionId !== currentSessionId) delete accounts.sessions[sessionId];
+        }
+      }
+      saveAccounts(accounts);
+      sendJson(response, 200, {
+        admin: {
+          id: admin.id,
+          name: admin.name,
+          email: admin.email,
+          createdAt: admin.createdAt,
+          isPrimary: admin.email === primaryEmail,
+        },
+      });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  if (url.pathname === '/api/admin/organizers' && request.method === 'POST') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then(async (body) => {
+      const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 60) : '';
+      const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+      if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        sendJson(response, 400, { error: '運営者名と正しいメールアドレスを入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      if (accounts.users.some((item) => item.email.toLowerCase() === email)) {
+        sendJson(response, 409, { error: 'このメールアドレスは登録済みです' });
+        return;
+      }
+      const id = crypto.randomUUID();
+      const temporaryPassword = crypto.randomBytes(12).toString('hex');
+      const salt = crypto.randomBytes(16).toString('hex');
+      const organizer = {
+        id,
+        name,
+        email,
+        role: 'organizer',
+        salt,
+        passwordHash: await passwordHash(temporaryPassword, salt),
+        mustChangePassword: true,
+        createdAt: Date.now(),
+      };
+      accounts.users.push(organizer);
+      saveAccounts(accounts);
+      sendJson(response, 201, {
+        organizer: { id, name, email, createdAt: organizer.createdAt },
+        temporaryPassword,
+      });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  const organizerEditMatch = url.pathname.match(/^\/api\/admin\/organizers\/([0-9a-f-]{36})$/i);
+  if (organizerEditMatch && request.method === 'PATCH') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then((body) => {
+      const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 60) : '';
+      const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+      if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        sendJson(response, 400, { error: '運営者名と正しいメールアドレスを入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const organizer = accounts.users.find((item) => item.id === organizerEditMatch[1] && item.role === 'organizer');
+      if (!organizer) {
+        sendJson(response, 404, { error: '運営者アカウントが見つかりません' });
+        return;
+      }
+      if (accounts.users.some((item) => item.id !== organizer.id && item.email.toLowerCase() === email)) {
+        sendJson(response, 409, { error: 'このメールアドレスは登録済みです' });
+        return;
+      }
+      const emailChanged = email !== organizer.email;
+      organizer.name = name;
+      organizer.email = email;
+      if (emailChanged) {
+        for (const [sessionId, session] of Object.entries(accounts.sessions)) {
+          if (session.userId === organizer.id) delete accounts.sessions[sessionId];
+        }
+      }
+      saveAccounts(accounts);
+      sendJson(response, 200, {
+        organizer: { id: organizer.id, name: organizer.name, email: organizer.email, createdAt: organizer.createdAt },
+      });
     }).catch((error) => sendJson(response, 400, { error: error.message }));
     return;
   }
@@ -1266,6 +1445,35 @@ const server = http.createServer((request, response) => {
       closeDeletedRace(raceMatch[1]);
       delete races[raceMatch[1]];
       saveRaces(races);
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    const adminMatch = url.pathname.match(/^\/api\/admin\/admins\/([0-9a-f-]{36})$/i);
+    if (adminMatch) {
+      const accounts = readAccounts();
+      const admin = accounts.users.find((item) => item.id === adminMatch[1] && item.role === 'admin');
+      if (!admin) {
+        sendJson(response, 404, { error: '管理者アカウントが見つかりません' });
+        return;
+      }
+      if (admin.id === user.id) {
+        sendJson(response, 409, { error: 'ログイン中の管理者は削除できません' });
+        return;
+      }
+      if (admin.email === String(process.env.ADMIN_EMAIL || '').trim().toLowerCase()) {
+        sendJson(response, 403, { error: '初期管理者は削除できません' });
+        return;
+      }
+      if (accounts.users.filter((item) => item.role === 'admin').length <= 1) {
+        sendJson(response, 409, { error: '最後の管理者は削除できません' });
+        return;
+      }
+      accounts.users = accounts.users.filter((item) => item.id !== admin.id);
+      for (const [sessionId, session] of Object.entries(accounts.sessions)) {
+        if (session.userId === admin.id) delete accounts.sessions[sessionId];
+      }
+      saveAccounts(accounts);
       sendJson(response, 200, { ok: true });
       return;
     }
