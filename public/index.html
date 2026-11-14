@@ -187,16 +187,18 @@
     .platinum-partner { display: flex; align-items: center; gap: 14px; flex-shrink: 0; color: white; text-decoration: none; }
     .platinum-copy { display: grid; gap: 3px; }
     .platinum-copy strong { color: #e7d8b7; font-size: 9px; letter-spacing: .12em; }
-    .jaaf-logo-frame { display: flex; align-items: center; justify-content: center; min-width: 112px; min-height: 48px; padding: 5px 12px; background: white; box-shadow: 0 2px 8px rgba(20,12,30,.12); }
+    .jaaf-logo-frame { display: flex; align-items: center; justify-content: center; }
     .jaaf-logo { display: block; width: 106px; height: auto; }
     .sponsor-group { display: flex; align-items: center; gap: 12px; }
     .sponsor-label { color: #e7d8b7; font-size: 10px; font-weight: 800; white-space: nowrap; }
     .sponsor-list { display: flex; align-items: center; gap: 9px; }
-    .sponsor-link { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 4px 9px; border: 1px solid #e8e3ee; background: white; color: #202020; text-decoration: none; }
-    .sponsor-link:hover, .sponsor-link:focus-visible { border-color: #d6c6a2; box-shadow: 0 2px 8px rgba(20,12,30,.14); }
+    .sponsor-link { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 4px 9px; color: white; text-decoration: none; }
+    .sponsor-link:hover, .sponsor-link:focus-visible { background: rgba(255,255,255,.1); }
     .sponsor-link img { display: block; object-fit: contain; }
+    .sponsor-newbalance img, .sponsor-cramer img { filter: brightness(0) invert(1); }
     .sponsor-newbalance img, .sponsor-github img { width: 24px; height: 24px; }
     .sponsor-cramer img { width: 104px; height: 26px; }
+    .sponsor-github img { filter: invert(1); mix-blend-mode: screen; }
     .sponsor-name { font-size: 11px; font-weight: 800; white-space: nowrap; }
     .mobile-only { display: none; }
     @keyframes page-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -253,7 +255,6 @@
       .platinum-partner { gap: 9px; }
       .platinum-copy { gap: 1px; }
       .platinum-copy strong { font-size: 8px; }
-      .jaaf-logo-frame { min-width: 88px; min-height: 34px; padding: 4px 8px; }
       .jaaf-logo { width: 78px; }
       .sponsor-group { gap: 0; }
       .sponsor-label { display: none; }

@@ -88,7 +88,7 @@ Cloudflare Pagesの静的ファイル配信は無料です。Supabase Freeでも
 
 ## ロゴ素材
 
-ヘッダーのSOKUHOロゴは独自作成のSVGです。全ページ下部には日本陸上競技連盟（JAAF）のプラチナパートナー欄と、協賛各社を固定表示しています。JAAFロゴは公式サイトのロゴ画像（https://www.jaaf.or.jp/img/h1img.png）を使用し、利用許可を得たうえで `public/jaaf-logo.png` に配置しています。
+ヘッダーのSOKUHOロゴは独自作成のSVGです。全ページ下部には日本陸上競技連盟（JAAF）のプラチナパートナー欄と、協賛各社を固定表示しています。各ロゴは背景を透過させ、濃い紫の背景に合わせた配色で表示しています。JAAFロゴは公式サイトのロゴ画像（https://www.jaaf.or.jp/img/h1img.png）を使用し、利用許可を得たうえで `public/jaaf-logo.png` に配置しています。
 
 - 筑波大学: 公式サイトのロゴSVG: https://www.tsukuba.ac.jp/assets/img/common/logo-w.svg
 - NISHI: 株式会社ニシ・スポーツ公式サイトのロゴSVG: https://www.nishi.com/cms/nishi/common/images/logo_nishi_wh.svg
