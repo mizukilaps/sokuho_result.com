@@ -45,12 +45,19 @@ function venueCountryCode(venue) {
   return venue.type === 'domestic' ? 'JP' : '';
 }
 
+function venueCodeFor(venue) {
+  const id = String(venue.id || '').replaceAll('-', '');
+  if (!/^[0-9a-f]{32}$/i.test(id)) throw new Error('Invalid venue ID');
+  return BigInt(`0x${id}`).toString(10);
+}
+
 function venueDetails(venue) {
   const countryCode = venueCountryCode(venue);
   return {
     ...venue,
     countryCode,
     country: countryCode ? countryDisplayNames.of(countryCode) : '',
+    sokuhoCode: venueCodeFor(venue),
   };
 }
 
@@ -589,6 +596,7 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
     const organizers = state.accounts.users.filter((item) => item.role === 'organizer');
     const races = Object.values(state.races);
     return reply(200, {
+      admin: accountLabel(state.accounts, user.id),
       organizerCount: organizers.length,
       raceCount: races.length,
       organizers: organizers.map(({ id, name, email, createdAt }) => ({
@@ -648,6 +656,21 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
     });
   }
 
+  if (pathname === '/api/admin/profile' && request.method === 'PATCH') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 80) : '';
+    if (!name) return reply(400, { error: '管理者名を入力してください' });
+    return transact(env, (state) => {
+      const admin = state.accounts.users.find((item) => item.id === user.id && item.role === 'admin');
+      if (!admin) return reply(404, { error: '管理者アカウントが見つかりません' });
+      admin.name = name;
+      const updated = reply(200, { admin: accountLabel(state.accounts, admin.id) });
+      updated.changed = true;
+      return updated;
+    });
+  }
+
   if (pathname === '/api/admin/venues' && request.method === 'POST') {
     if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
     const body = await requestBody(request);
@@ -655,6 +678,7 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
       || (body?.type === 'domestic' ? 'JP' : '');
     const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
     const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 150) : '';
+    const address = typeof body?.address === 'string' ? body.address.trim().slice(0, 200) : '';
     if (!UN_MEMBER_COUNTRY_CODES.includes(countryCode) || !name) {
       return reply(400, { error: '国連加盟国と会場名を指定してください' });
     }
@@ -664,9 +688,12 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
       if (state.venues.some((item) => matchesVenue(item, venueIdentity))) {
         return reply(409, { error: '同じ国・所在地・会場名がすでに登録されています' });
       }
+      const id = crypto.randomUUID();
       const venue = {
-        id: crypto.randomUUID(),
+        id,
         ...venueIdentity,
+        sokuhoCode: venueCodeFor({ id }),
+        address,
         country: countryDisplayNames.of(countryCode),
         createdAt: Date.now(),
       };
@@ -674,6 +701,37 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
       const created = reply(201, { venue });
       created.changed = true;
       return created;
+    });
+  }
+
+  const venueMatch = pathname.match(/^\/api\/admin\/venues\/([0-9a-f-]{36})$/i);
+  if (venueMatch && request.method === 'PATCH') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    const countryCode = String(body?.countryCode || '').toUpperCase();
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
+    const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 150) : '';
+    const address = typeof body?.address === 'string' ? body.address.trim().slice(0, 200) : '';
+    if (!UN_MEMBER_COUNTRY_CODES.includes(countryCode) || !name) {
+      return reply(400, { error: '国連加盟国と会場名を指定してください' });
+    }
+    return transact(env, (state) => {
+      state.venues ||= [];
+      const venue = state.venues.find((item) => item.id === venueMatch[1]);
+      if (!venue) return reply(404, { error: '会場が見つかりません' });
+      const venueIdentity = { countryCode, name, location };
+      if (state.venues.some((item) => item.id !== venue.id && matchesVenue(item, venueIdentity))) {
+        return reply(409, { error: '同じ国・所在地・会場名がすでに登録されています' });
+      }
+      Object.assign(venue, venueIdentity, {
+        address,
+        country: countryDisplayNames.of(countryCode),
+        sokuhoCode: venueCodeFor(venue),
+        updatedAt: Date.now(),
+      });
+      const updated = reply(200, { venue: venueDetails(venue) });
+      updated.changed = true;
+      return updated;
     });
   }
 
@@ -693,8 +751,10 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
       if (venueRequest.status !== 'pending') return reply(409, { error: 'この申請は審査済みです' });
       let venue = state.venues.find((item) => matchesVenue(item, venueRequest));
       if (status === 'approved' && !venue) {
+        const id = crypto.randomUUID();
         venue = {
-          id: crypto.randomUUID(),
+          id,
+          sokuhoCode: venueCodeFor({ id }),
           countryCode: venueRequest.countryCode,
           country: venueRequest.country,
           location: venueRequest.location,

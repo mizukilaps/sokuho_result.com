@@ -331,6 +331,15 @@ test('admins can manage UN-member country venues and review organizer venue requ
   });
   const organizerSession = registration.headers.get('x-sokuho-session');
 
+  assert.equal((await request('/api/admin/profile', { name: '管理者名' }, undefined, 'PATCH')).status, 401);
+  assert.equal((await request('/api/admin/profile', { name: '管理者名' }, organizerSession, 'PATCH')).status, 403);
+  assert.equal((await request('/api/admin/profile', { name: '   ' }, adminSession, 'PATCH')).status, 400);
+  const profileResponse = await request('/api/admin/profile', { name: '大会管理者' }, adminSession, 'PATCH');
+  assert.equal(profileResponse.status, 200);
+  const updatedAdmin = (await json(profileResponse)).admin;
+  assert.equal(updatedAdmin.name, '大会管理者');
+  assert.equal(updatedAdmin.email, 'admin@example.com');
+
   assert.equal((await request('/api/admin/venues', { countryCode: 'JP', location: '東京都', name: '国立競技場' })).status, 401);
   assert.equal((await request('/api/admin/venues', { countryCode: 'JP', location: '東京都', name: '国立競技場' }, organizerSession)).status, 403);
   assert.equal((await request('/api/admin/venues', { countryCode: 'VA', location: '東京都', name: '国立競技場' }, adminSession)).status, 400);
@@ -339,10 +348,14 @@ test('admins can manage UN-member country venues and review organizer venue requ
     countryCode: 'JP',
     location: '東京都',
     name: '国立競技場',
+    address: '東京都新宿区霞ヶ丘町10-1',
   }, adminSession);
   const domesticVenue = (await json(domesticResponse)).venue;
   assert.equal(domesticResponse.status, 201);
   assert.equal(domesticVenue.countryCode, 'JP');
+  assert.equal(domesticVenue.address, '東京都新宿区霞ヶ丘町10-1');
+  assert.match(domesticVenue.sokuhoCode, /^\d+$/);
+  state.venues.find((venue) => venue.id === domesticVenue.id).sokuhoCode = 'SOKUHO-OLD-CODE';
   const internationalResponse = await request('/api/admin/venues', {
     countryCode: 'US',
     location: 'アメリカ・カリフォルニア州',
@@ -356,7 +369,31 @@ test('admins can manage UN-member country venues and review organizer venue requ
     { countryCode: 'JP', location: '東京都', name: '国立競技場' },
     { countryCode: 'US', location: 'アメリカ・カリフォルニア州', name: 'Example Stadium' },
   ]);
+  assert.equal(portal.venues[0].sokuhoCode, domesticVenue.sokuhoCode);
   assert.equal((await request(`/api/admin/venues/${domesticVenue.id}`, undefined, organizerSession, 'DELETE')).status, 403);
+  assert.equal((await request(`/api/admin/venues/${domesticVenue.id}`, {
+    countryCode: 'JP',
+    location: '東京都新宿区',
+    name: '国立競技場（編集）',
+    address: '東京都新宿区霞ヶ丘町10-2',
+  }, organizerSession, 'PATCH')).status, 403);
+  const editResponse = await request(`/api/admin/venues/${domesticVenue.id}`, {
+    countryCode: 'JP',
+    location: '東京都新宿区',
+    name: '国立競技場（編集）',
+    address: '東京都新宿区霞ヶ丘町10-2',
+  }, adminSession, 'PATCH');
+  const editedVenue = (await json(editResponse)).venue;
+  assert.equal(editResponse.status, 200);
+  assert.equal(editedVenue.name, '国立競技場（編集）');
+  assert.equal(editedVenue.address, '東京都新宿区霞ヶ丘町10-2');
+  assert.equal(editedVenue.sokuhoCode, domesticVenue.sokuhoCode);
+  assert.equal((await request(`/api/admin/venues/${domesticVenue.id}`, {
+    countryCode: 'US',
+    location: 'アメリカ・カリフォルニア州',
+    name: 'Example Stadium',
+    address: '',
+  }, adminSession, 'PATCH')).status, 409);
   assert.equal((await request(`/api/admin/venues/${domesticVenue.id}`, undefined, adminSession, 'DELETE')).status, 200);
   const raceResponse = await request('/api/races', {
     title: '申請テスト大会',
@@ -392,6 +429,7 @@ test('admins can manage UN-member country venues and review organizer venue requ
   const organizerPortal = await json(await request('/api/organizer/portal', undefined, organizerSession));
   assert.equal(organizerPortal.venueRequests[0].status, 'approved');
   const summary = await json(await request('/api/admin/summary', undefined, adminSession));
+  assert.equal(summary.admin.name, '大会管理者');
   assert.deepEqual(summary.venues.map((venue) => venue.name), ['Example Stadium', '申請会場']);
 
   const rejectedRequestResponse = await request('/api/organizer/venue-requests', {

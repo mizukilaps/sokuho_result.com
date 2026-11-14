@@ -61,12 +61,19 @@ function venueCountryCode(venue) {
   return venue.type === 'domestic' ? 'JP' : '';
 }
 
+function venueCodeFor(venue) {
+  const id = String(venue.id || '').replaceAll('-', '');
+  if (!/^[0-9a-f]{32}$/i.test(id)) throw new Error('Invalid venue ID');
+  return BigInt(`0x${id}`).toString(10);
+}
+
 function venueDetails(venue) {
   const countryCode = venueCountryCode(venue);
   return {
     ...venue,
     countryCode,
     country: countryCode ? countryDisplayNames.of(countryCode) : '',
+    sokuhoCode: venueCodeFor(venue),
   };
 }
 
@@ -939,6 +946,7 @@ const server = http.createServer((request, response) => {
       createdAt: race.createdAt,
     }));
     sendJson(response, 200, {
+      admin: accountLabel(accounts, user.id),
       organizerCount: organizers.length,
       raceCount: races.length,
       organizers: organizers.map(({ id, name, email, createdAt }) => ({
@@ -995,6 +1003,30 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (url.pathname === '/api/admin/profile' && request.method === 'PATCH') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then((body) => {
+      const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 80) : '';
+      if (!name) {
+        sendJson(response, 400, { error: '管理者名を入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const admin = accounts.users.find((item) => item.id === user.id && item.role === 'admin');
+      if (!admin) {
+        sendJson(response, 404, { error: '管理者アカウントが見つかりません' });
+        return;
+      }
+      admin.name = name;
+      saveAccounts(accounts);
+      sendJson(response, 200, { admin: accountLabel(accounts, admin.id) });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
   if (url.pathname === '/api/admin/venues' && request.method === 'POST') {
     if (user?.role !== 'admin') {
       sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
@@ -1005,6 +1037,7 @@ const server = http.createServer((request, response) => {
         || (body?.type === 'domestic' ? 'JP' : '');
       const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
       const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 150) : '';
+      const address = typeof body?.address === 'string' ? body.address.trim().slice(0, 200) : '';
       if (!UN_MEMBER_COUNTRY_CODES.includes(countryCode) || !name) {
         sendJson(response, 400, { error: '国連加盟国と会場名を指定してください' });
         return;
@@ -1015,15 +1048,56 @@ const server = http.createServer((request, response) => {
         sendJson(response, 409, { error: '同じ国・所在地・会場名がすでに登録されています' });
         return;
       }
+      const id = crypto.randomUUID();
       const venue = {
-        id: crypto.randomUUID(),
+        id,
+        sokuhoCode: venueCodeFor({ id }),
         ...venueIdentity,
+        address,
         country: countryDisplayNames.of(countryCode),
         createdAt: Date.now(),
       };
       accounts.venues.push(venue);
       saveAccounts(accounts);
       sendJson(response, 201, { venue });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
+  const venueEditMatch = url.pathname.match(/^\/api\/admin\/venues\/([0-9a-f-]{36})$/i);
+  if (venueEditMatch && request.method === 'PATCH') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then((body) => {
+      const countryCode = String(body?.countryCode || '').toUpperCase();
+      const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
+      const location = typeof body?.location === 'string' ? body.location.trim().slice(0, 150) : '';
+      const address = typeof body?.address === 'string' ? body.address.trim().slice(0, 200) : '';
+      if (!UN_MEMBER_COUNTRY_CODES.includes(countryCode) || !name) {
+        sendJson(response, 400, { error: '国連加盟国と会場名を指定してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      const venue = accounts.venues.find((item) => item.id === venueEditMatch[1]);
+      if (!venue) {
+        sendJson(response, 404, { error: '会場が見つかりません' });
+        return;
+      }
+      const venueIdentity = { countryCode, name, location };
+      if (accounts.venues.some((item) => item.id !== venue.id && matchesVenue(item, venueIdentity))) {
+        sendJson(response, 409, { error: '同じ国・所在地・会場名がすでに登録されています' });
+        return;
+      }
+      Object.assign(venue, venueIdentity, {
+        address,
+        country: countryDisplayNames.of(countryCode),
+        sokuhoCode: venueCodeFor(venue),
+        updatedAt: Date.now(),
+      });
+      saveAccounts(accounts);
+      sendJson(response, 200, { venue: venueDetails(venue) });
     }).catch((error) => sendJson(response, 400, { error: error.message }));
     return;
   }
@@ -1057,8 +1131,10 @@ const server = http.createServer((request, response) => {
       }
       let venue = accounts.venues.find((item) => matchesVenue(item, venueRequest));
       if (status === 'approved' && !venue) {
+        const id = crypto.randomUUID();
         venue = {
-          id: crypto.randomUUID(),
+          id,
+          sokuhoCode: venueCodeFor({ id }),
           countryCode: venueRequest.countryCode,
           country: venueRequest.country,
           location: venueRequest.location,
