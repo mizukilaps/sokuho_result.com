@@ -644,12 +644,56 @@
         <section class="admin-table" id="admin-races" data-admin-section="admin-races"><h2>大会一覧</h2>${summary.races.length ? `<div class="table-wrap"><table><thead><tr><th>大会名</th><th>主催者</th><th>共同運営者</th><th>作成日</th><th>速報URL</th><th>大会</th><th>操作</th></tr></thead><tbody>${summary.races.map((item) => `<tr><td class="athlete-name" data-label="大会名">${escapeHtml(item.title)}</td><td data-label="主催者">${escapeHtml(item.owner?.name || 'アカウント削除済み')}<br>${escapeHtml(item.owner?.email || '')}</td><td data-label="共同運営者">${item.collaborators.length ? item.collaborators.map((member) => escapeHtml(member.name)).join('、') : '—'}</td><td data-label="作成日">${new Date(item.createdAt).toLocaleDateString('ja-JP')}</td><td class="race-url" data-label="速報URL"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">${escapeHtml(new URL(pageUrl(item.publicPath), location.origin).href)}</a><br><button class="secondary" type="button" data-copy-race-url="${item.id}">URLをコピー</button></td><td data-label="大会"><a href="${pageUrl(item.publicPath)}" target="_blank" rel="noopener noreferrer">大会を開く</a></td><td data-label="操作"><button class="danger" data-delete-race="${item.id}" data-race-title="${escapeHtml(item.title)}">削除</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">大会はまだ作成されていません。</div>'}</section>
         <section class="admin-table" id="admin-audit" data-admin-section="admin-audit"><h2>競技情報の変更履歴</h2>${summary.auditLog.length ? `<div class="portal-list">${summary.auditLog.map((entry) => `<article class="audit-entry"><h3>${entry.action === 'event_order_changed' ? '競技順を変更' : '競技・選手・記録を編集'}</h3><div class="portal-meta">${escapeHtml(entry.raceTitle || '大会')} ・ ${escapeHtml(entry.actor?.name || '削除済み運営者')} ・ ${new Date(entry.createdAt).toLocaleString('ja-JP')}</div><details><summary>変更前・変更後を表示</summary><strong>変更前</strong><pre>${escapeHtml(auditSnapshotSummary(entry.before))}</pre><strong>変更後</strong><pre>${escapeHtml(auditSnapshotSummary(entry.after))}</pre></details></article>`).join('')}</div>` : '<div class="empty">競技情報の変更履歴はまだありません。</div>'}</section></div></div>`;
       document.querySelector('#edit-un-member-countries').innerHTML = countryOptionsMarkup(summary.countryCodes);
+      if (summary.isSubadmin) {
+        document.querySelector('h1')?.replaceChildren(document.createTextNode('サブ管理者ダッシュボード'));
+        document.querySelector('#admin-maintenance')?.remove();
+        document.querySelector('.admin-sidebar a[href$="#admin-maintenance"]')?.remove();
+        document.querySelector('#create-admin-form')?.closest('.group-panel')?.remove();
+        const adminHeading = [...document.querySelectorAll('#admin-organizers h3')]
+          .find((heading) => heading.textContent === '管理者一覧');
+        adminHeading?.nextElementSibling?.remove();
+        adminHeading?.remove();
+      } else {
+        const createAdminPanel = document.querySelector('#create-admin-form')?.closest('.group-panel');
+        if (createAdminPanel) {
+          const subadminPanel = document.createElement('section');
+          subadminPanel.className = 'group-panel';
+          subadminPanel.innerHTML = '<h3>サブ管理者を追加</h3><form id="create-subadmin-form" class="account-create-form"><div class="field"><label for="new-subadmin-name">氏名</label><input id="new-subadmin-name" name="name" required maxlength="80"></div><div class="field"><label for="new-subadmin-affiliation">所属</label><input id="new-subadmin-affiliation" name="affiliation" required maxlength="120"></div><div class="field"><label for="new-subadmin-email">ログインメールアドレス</label><input id="new-subadmin-email" name="email" type="email" required maxlength="254"></div><p class="hint">お問い合わせ対応・一斉お知らせ・会場・運営者・大会・変更履歴を扱えます。管理者アカウント管理とメンテナンス切替はできません。</p><p class="error" role="alert"></p><button class="primary" type="submit">サブ管理者を追加</button></form>';
+          const subadminForm = subadminPanel.querySelector('#create-subadmin-form');
+          subadminForm.dataset.accountType = 'subadmins';
+          subadminForm.addEventListener('submit', submitAccountCreate);
+          createAdminPanel.after(subadminPanel);
+        }
+        const adminHeading = [...document.querySelectorAll('#admin-organizers h3')]
+          .find((heading) => heading.textContent === '管理者一覧');
+        const adminTable = adminHeading?.nextElementSibling?.querySelector('table');
+        if (adminTable) {
+          const affiliationHeader = document.createElement('th');
+          affiliationHeader.textContent = '所属';
+          adminTable.tHead.rows[0].insertBefore(affiliationHeader, adminTable.tHead.rows[0].cells[2]);
+          summary.admins.forEach((admin, index) => {
+            const row = adminTable.tBodies[0].rows[index];
+            const affiliationCell = row.insertCell(2);
+            affiliationCell.dataset.label = '所属';
+            affiliationCell.textContent = admin.affiliation || '—';
+            const editButton = row.querySelector('[data-edit-admin]');
+            editButton.dataset.accountAffiliation = admin.affiliation || '';
+            editButton.dataset.subadmin = String(admin.isSubadmin);
+            if (admin.isSubadmin) {
+              const badge = document.createElement('span');
+              badge.className = 'status-label';
+              badge.textContent = 'サブ管理者';
+              row.cells[0].append(' ', badge);
+            }
+          });
+        }
+      }
       activateAdminSection(location.hash.slice(1) || 'admin-profile');
       animatePage(animate);
       document.querySelector('#logout-button').addEventListener('click', logout);
       document.querySelector('#admin-profile-form').addEventListener('submit', submitAdminProfile);
-      document.querySelector('#create-admin-form').addEventListener('submit', submitAccountCreate);
-      document.querySelector('#create-organizer-form').addEventListener('submit', submitAccountCreate);
+      document.querySelector('#create-admin-form')?.addEventListener('submit', submitAccountCreate);
+      document.querySelector('#create-organizer-form')?.addEventListener('submit', submitAccountCreate);
       document.querySelector('#maintenance-form').addEventListener('submit', submitMaintenance);
       document.querySelector('#announcement-form').addEventListener('submit', submitAnnouncement);
       document.querySelector('#venue-form').addEventListener('submit', submitVenue);
@@ -671,7 +715,14 @@
         button.addEventListener('click', () => deleteAdminItem('organizers', button.dataset.deleteOrganizer, button.dataset.organizerName));
       });
       document.querySelectorAll('[data-edit-admin]').forEach((button) => {
-        button.addEventListener('click', () => editAccount('admins', button.dataset.editAdmin, button.dataset.accountName, button.dataset.accountEmail));
+        button.addEventListener('click', () => editAccount(
+          'admins',
+          button.dataset.editAdmin,
+          button.dataset.accountName,
+          button.dataset.accountEmail,
+          button.dataset.accountAffiliation,
+          button.dataset.subadmin === 'true',
+        ));
       });
       document.querySelectorAll('[data-edit-organizer]').forEach((button) => {
         button.addEventListener('click', () => editAccount('organizers', button.dataset.editOrganizer, button.dataset.accountName, button.dataset.accountEmail));
@@ -958,15 +1009,17 @@
       event.preventDefault();
       const form = event.currentTarget;
       const formData = new FormData(form);
-      const type = form.id === 'create-admin-form' ? 'admins' : 'organizers';
+      const type = form.dataset.accountType || (form.id === 'create-admin-form' ? 'admins' : 'organizers');
       const name = String(formData.get('name') || '').trim();
       const email = String(formData.get('email') || '').trim();
+      const payload = { name, email };
+      if (type === 'subadmins') payload.affiliation = String(formData.get('affiliation') || '').trim();
       const error = form.querySelector('[role="alert"]');
       error.textContent = '';
       try {
         const result = await request(`/api/admin/${type}`, {
           method: 'POST',
-          body: JSON.stringify({ name, email }),
+          body: JSON.stringify(payload),
         });
         oneTimePassword = { name, email, password: result.temporaryPassword };
         form.reset();
@@ -976,15 +1029,19 @@
       }
     }
 
-    async function editAccount(type, id, name, email) {
-      const updatedName = window.prompt('名前を入力してください', name);
+    async function editAccount(type, id, name, email, affiliation = '', isSubadmin = false) {
+      const updatedName = window.prompt(isSubadmin ? '氏名を入力してください' : '名前を入力してください', name);
       if (updatedName === null) return;
       const updatedEmail = window.prompt('メールアドレスを入力してください', email);
       if (updatedEmail === null) return;
+      const updatedAffiliation = isSubadmin ? window.prompt('所属を入力してください', affiliation) : affiliation;
+      if (updatedAffiliation === null) return;
+      const payload = { name: updatedName, email: updatedEmail };
+      if (isSubadmin) payload.affiliation = updatedAffiliation;
       try {
         const result = await request(`/api/admin/${type}/${encodeURIComponent(id)}`, {
           method: 'PATCH',
-          body: JSON.stringify({ name: updatedName, email: updatedEmail }),
+          body: JSON.stringify(payload),
         });
         if (type === 'admins' && currentUser.id === id) {
           currentUser = { ...currentUser, name: result.admin.name, email: result.admin.email };

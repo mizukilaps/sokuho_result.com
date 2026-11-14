@@ -2,6 +2,7 @@ import UN_MEMBER_COUNTRY_CODES from './un-member-country-codes.json' with { type
 
 const SESSION_LIFETIME = 30 * 24 * 60 * 60 * 1000;
 const PASSWORD_ITERATIONS = 120000;
+const SUBADMIN_PERMISSIONS = ['support', 'announcements', 'venues', 'organizers', 'races', 'audit'];
 const DEFAULT_MAINTENANCE_MESSAGE = 'メンテナンス中です。復旧までしばらくお待ちください。';
 const encoder = new TextEncoder();
 const countryDisplayNames = new Intl.DisplayNames(['ja'], { type: 'region' });
@@ -149,6 +150,9 @@ function currentUser(state, tokenHash) {
     email: user.email,
     role: user.role,
     mustChangePassword: Boolean(user.mustChangePassword),
+    isSubadmin: Boolean(user.isSubadmin),
+    affiliation: user.affiliation || '',
+    permissions: user.isSubadmin ? user.permissions || [] : [],
   } : null;
 }
 
@@ -291,6 +295,30 @@ function statusForUser(user) {
   return user ? 403 : 401;
 }
 
+function subadminAccessDenied(user, pathname, method) {
+  if (!user?.isSubadmin) return false;
+  const permissions = new Set(user.permissions || []);
+  const allowed = (...required) => required.some((permission) => permissions.has(permission));
+  if (pathname === '/api/admin/summary' || pathname === '/api/admin/profile') return false;
+  if (pathname === '/api/admin/maintenance' || pathname.startsWith('/api/admin/admins')
+    || pathname.startsWith('/api/admin/subadmins')) return true;
+  if (pathname.startsWith('/api/admin/organizers/') && pathname.endsWith('/reset-password')) {
+    return !allowed('support', 'organizers');
+  }
+  if (pathname.startsWith('/api/admin/organizers')) return !allowed('organizers');
+  if (pathname.startsWith('/api/admin/support')) return !allowed('support');
+  if (pathname.startsWith('/api/admin/announcements')) return !allowed('announcements');
+  if (pathname.startsWith('/api/admin/venues') || pathname.startsWith('/api/admin/venue-requests')) {
+    return !allowed('venues');
+  }
+  if (pathname.startsWith('/api/admin/races')) return !allowed('races');
+  if (pathname === '/api/support' && method === 'POST') return true;
+  if (/^\/api\/support\/[0-9a-f-]{36}\/messages$/i.test(pathname) && method === 'POST') {
+    return !allowed('support');
+  }
+  return pathname.startsWith('/api/admin/');
+}
+
 async function routeApi(request, env, url, user, tokenHash, initialState) {
   const { pathname } = url;
 
@@ -312,6 +340,9 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
   }
   if (user?.mustChangePassword && !['/api/auth/me', '/api/auth/logout', '/api/auth/password/change'].includes(pathname)) {
     return reply(403, { error: '一時パスワードを変更してからご利用ください' });
+  }
+  if (subadminAccessDenied(user, pathname, request.method)) {
+    return reply(403, { error: 'この操作を行う権限がありません' });
   }
 
   if (pathname === '/api/auth/register' && request.method === 'POST') {
@@ -388,6 +419,9 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
           email,
           role: latestUser.role,
           mustChangePassword: Boolean(latestUser.mustChangePassword),
+          isSubadmin: Boolean(latestUser.isSubadmin),
+          affiliation: latestUser.affiliation || '',
+          permissions: latestUser.isSubadmin ? latestUser.permissions || [] : [],
         },
       }, { 'set-cookie': sessionCookie(request, token), 'x-sokuho-session': token });
       loggedIn.changed = true;
@@ -593,59 +627,68 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
   if (pathname === '/api/admin/summary' && request.method === 'GET') {
     if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
     const { state } = await loadState(env);
+    const isSubadmin = Boolean(user.isSubadmin);
+    const permissions = isSubadmin ? user.permissions || [] : [];
+    const canAccess = (permission) => !isSubadmin || permissions.includes(permission);
     const organizers = state.accounts.users.filter((item) => item.role === 'organizer');
     const admins = state.accounts.users.filter((item) => item.role === 'admin');
     const races = Object.values(state.races);
     return reply(200, {
       admin: accountLabel(state.accounts, user.id),
-      admins: admins.map(({ id, name, email, createdAt }) => ({
+      isSubadmin,
+      permissions,
+      admins: isSubadmin ? [] : admins.map(({ id, name, email, affiliation, isSubadmin: subadmin, createdAt }) => ({
         id,
         name,
         email,
+        affiliation: affiliation || '',
+        isSubadmin: Boolean(subadmin),
         createdAt,
         isPrimary: email === String(env.ADMIN_EMAIL || '').trim().toLowerCase(),
       })),
-      organizerCount: organizers.length,
-      raceCount: races.length,
-      organizers: organizers.map(({ id, name, email, createdAt }) => ({
+      organizerCount: canAccess('organizers') ? organizers.length : 0,
+      raceCount: canAccess('races') ? races.length : 0,
+      organizers: canAccess('organizers') ? organizers.map(({ id, name, email, createdAt }) => ({
         id,
         name,
         email,
         createdAt,
         ownedRaceCount: races.filter((race) => race.ownerId === id).length,
         collaborationCount: races.filter((race) => (race.collaborationGroup?.memberIds || []).includes(id)).length,
-      })),
-      races: races.map((race) => ({
+      })) : [],
+      races: canAccess('races') ? races.map((race) => ({
         id: race.id,
         publicPath: `/r/${race.id}`,
         title: race.title,
         owner: accountLabel(state.accounts, race.ownerId),
         collaborators: groupDetails(race, state.accounts)?.members || [],
         createdAt: race.createdAt,
-      })),
-      auditLog: (state.auditLog || []).slice(-100).reverse().map((entry) => ({
+      })) : [],
+      auditLog: canAccess('audit') ? (state.auditLog || []).slice(-100).reverse().map((entry) => ({
         ...entry,
         actor: accountLabel(state.accounts, entry.actorId),
-      })),
-      supportTickets: (state.supportTickets || [])
+      })) : [],
+      supportTickets: canAccess('support') ? (state.supportTickets || [])
         .map((ticket) => ({
           ...ticket,
           organizer: accountLabel(state.accounts, ticket.organizerId),
         }))
-        .sort((left, right) => right.updatedAt - left.updatedAt),
-      announcements: (state.announcements || [])
+        .sort((left, right) => right.updatedAt - left.updatedAt) : [],
+      announcements: canAccess('announcements') ? (state.announcements || [])
         .map((item) => ({ ...item, important: Boolean(item.important) }))
-        .sort((left, right) => right.createdAt - left.createdAt),
-      venues: (state.venues || []).map(venueDetails),
-      countryCodes: UN_MEMBER_COUNTRY_CODES,
-      venueRequests: (state.venueRequests || [])
+        .sort((left, right) => right.createdAt - left.createdAt) : [],
+      venues: canAccess('venues') ? (state.venues || []).map(venueDetails) : [],
+      countryCodes: canAccess('venues') ? UN_MEMBER_COUNTRY_CODES : [],
+      venueRequests: canAccess('venues') ? (state.venueRequests || [])
         .map((item) => ({
           ...item,
           organizer: accountLabel(state.accounts, item.organizerId),
           raceTitle: state.races[item.raceId]?.title || item.raceTitle || '削除済み大会',
         }))
-        .sort((left, right) => right.updatedAt - left.updatedAt),
-      maintenance: maintenanceStatus(state),
+        .sort((left, right) => right.updatedAt - left.updatedAt) : [],
+      maintenance: isSubadmin
+        ? { enabled: false, message: DEFAULT_MAINTENANCE_MESSAGE }
+        : maintenanceStatus(state),
     });
   }
 
@@ -715,11 +758,59 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
     });
   }
 
+  if (pathname === '/api/admin/subadmins' && request.method === 'POST') {
+    if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
+    const body = await requestBody(request);
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 80) : '';
+    const affiliation = typeof body?.affiliation === 'string' ? body.affiliation.trim().slice(0, 120) : '';
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (!name || !affiliation || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return reply(400, { error: '氏名・所属・正しいメールアドレスを入力してください' });
+    }
+    const temporaryPassword = randomHex(12);
+    const salt = randomHex(16);
+    const passwordHash = await hashPassword(temporaryPassword, salt);
+    return transact(env, (state) => {
+      if (state.accounts.users.some((item) => item.email.toLowerCase() === email)) {
+        return reply(409, { error: 'このメールアドレスは登録済みです' });
+      }
+      const subadmin = {
+        id: crypto.randomUUID(),
+        name,
+        affiliation,
+        email,
+        role: 'admin',
+        isSubadmin: true,
+        permissions: SUBADMIN_PERMISSIONS,
+        salt,
+        passwordHash,
+        hashIterations: PASSWORD_ITERATIONS,
+        mustChangePassword: true,
+        createdAt: Date.now(),
+      };
+      state.accounts.users.push(subadmin);
+      const created = reply(201, {
+        subadmin: {
+          id: subadmin.id,
+          name,
+          affiliation,
+          email,
+          isSubadmin: true,
+          createdAt: subadmin.createdAt,
+        },
+        temporaryPassword,
+      });
+      created.changed = true;
+      return created;
+    });
+  }
+
   const adminMatch = pathname.match(/^\/api\/admin\/admins\/([0-9a-f-]{36})$/i);
   if (adminMatch && request.method === 'PATCH') {
     if (user?.role !== 'admin') return reply(statusForUser(user), { error: '管理者専用です' });
     const body = await requestBody(request);
     const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 80) : '';
+    const affiliation = typeof body?.affiliation === 'string' ? body.affiliation.trim().slice(0, 120) : '';
     const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
     if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return reply(400, { error: '管理者名と正しいメールアドレスを入力してください' });
@@ -737,6 +828,12 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
       const emailChanged = email !== admin.email;
       admin.name = name;
       admin.email = email;
+      if (admin.isSubadmin) {
+        if (!affiliation) return reply(400, { error: 'サブ管理者の所属を入力してください' });
+        admin.affiliation = affiliation;
+      } else if (typeof body?.affiliation === 'string') {
+        admin.affiliation = affiliation;
+      }
       if (emailChanged) {
         for (const [sessionId, session] of Object.entries(state.accounts.sessions)) {
           if (session.userId === admin.id && sessionId !== tokenHash) delete state.accounts.sessions[sessionId];
@@ -746,6 +843,7 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
         admin: {
           id: admin.id,
           name: admin.name,
+          affiliation: admin.affiliation || '',
           email: admin.email,
           createdAt: admin.createdAt,
           isPrimary: admin.email === primaryEmail,

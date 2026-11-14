@@ -551,6 +551,97 @@ test('admins can manage admin and organizer accounts with protected primary acce
   assert.equal((await request(`/api/admin/organizers/${organizer.id}`, undefined, adminSession, 'DELETE')).status, 200);
 });
 
+test('subadmins can use their assigned tools but cannot manage administrators or maintenance', async () => {
+  const { default: backend } = await import('./backend.mjs?subadmin-access');
+  let version = 0;
+  let state = { races: {}, accounts: { users: [], sessions: {} } };
+  const DB = {
+    async load() {
+      return { version, state: structuredClone(state) };
+    },
+    async compareAndSwap(expectedVersion, nextState) {
+      if (expectedVersion !== version) return false;
+      state = structuredClone(nextState);
+      version += 1;
+      return true;
+    },
+  };
+  const env = { DB, ADMIN_EMAIL: 'admin@example.com', ADMIN_PASSWORD: 'admin-password-123' };
+  const request = async (path, body, session, method = body ? 'POST' : 'GET') => backend.fetch(new Request(`https://example.test${path}`, {
+    method,
+    headers: {
+      ...(body ? { 'content-type': 'application/json' } : {}),
+      ...(session ? { 'x-sokuho-session': session } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  }), env);
+  const json = async (response) => response.json();
+
+  await request('/api/auth/me');
+  const rootLogin = await request('/api/auth/login', {
+    email: env.ADMIN_EMAIL,
+    password: env.ADMIN_PASSWORD,
+    expectedRole: 'admin',
+  });
+  const rootSession = rootLogin.headers.get('x-sokuho-session');
+  const created = await request('/api/admin/subadmins', {
+    name: '副管理者',
+    affiliation: '運営本部',
+    email: 'subadmin@example.com',
+  }, rootSession);
+  const { subadmin, temporaryPassword } = await json(created);
+  assert.equal(created.status, 201);
+  assert.equal(subadmin.affiliation, '運営本部');
+  const updatedSubadmin = await request(`/api/admin/admins/${subadmin.id}`, {
+    name: '副管理者',
+    affiliation: '大会運営部',
+    email: subadmin.email,
+  }, rootSession, 'PATCH');
+  assert.equal(updatedSubadmin.status, 200);
+  assert.equal((await json(updatedSubadmin)).admin.affiliation, '大会運営部');
+
+  const login = await request('/api/auth/login', {
+    email: subadmin.email,
+    password: temporaryPassword,
+    expectedRole: 'admin',
+  });
+  const subadminSession = login.headers.get('x-sokuho-session');
+  assert.equal((await json(login)).user.isSubadmin, true);
+  assert.equal((await request('/api/admin/summary', undefined, subadminSession)).status, 403);
+  assert.equal((await request('/api/auth/password/change', {
+    password: 'subadmin-password-12345',
+  }, subadminSession)).status, 200);
+
+  const summaryResponse = await request('/api/admin/summary', undefined, subadminSession);
+  const summary = await json(summaryResponse);
+  assert.equal(summaryResponse.status, 200);
+  assert.equal(summary.isSubadmin, true);
+  assert.deepEqual(summary.permissions, ['support', 'announcements', 'venues', 'organizers', 'races', 'audit']);
+  assert.deepEqual(summary.admins, []);
+  assert.equal((await request('/api/admin/admins', {
+    name: '不許可',
+    email: 'forbidden@example.com',
+  }, subadminSession)).status, 403);
+  assert.equal((await request('/api/admin/subadmins', {
+    name: '不許可',
+    affiliation: '本部',
+    email: 'forbidden-subadmin@example.com',
+  }, subadminSession)).status, 403);
+  assert.equal((await request('/api/admin/maintenance', { enabled: true }, subadminSession)).status, 403);
+  assert.equal((await request('/api/admin/announcements', {
+    title: '更新案内',
+    message: 'サブ管理者からのお知らせです。',
+  }, subadminSession)).status, 201);
+  assert.equal((await request('/api/admin/venues', {
+    countryCode: 'JP',
+    name: 'サブ管理者登録会場',
+  }, subadminSession)).status, 201);
+  assert.equal((await request('/api/admin/organizers', {
+    name: '追加運営者',
+    email: 'new-organizer@example.com',
+  }, subadminSession)).status, 201);
+});
+
 test('maintenance blocks organizer APIs while preserving public race access and admin controls', async () => {
   const { default: backend } = await import('./backend.mjs?maintenance-mode');
   let version = 0;

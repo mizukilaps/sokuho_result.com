@@ -12,6 +12,7 @@ const clients = new Map();
 const UN_MEMBER_COUNTRY_CODES = require('./un-member-country-codes.json');
 const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
 const defaultMaintenanceMessage = 'メンテナンス中です。復旧までしばらくお待ちください。';
+const subadminPermissions = ['support', 'announcements', 'venues', 'organizers', 'races', 'audit'];
 const countryDisplayNames = new Intl.DisplayNames(['ja'], { type: 'region' });
 
 fs.mkdirSync(dataDir, { recursive: true });
@@ -139,7 +140,34 @@ function currentUser(request) {
     email: user.email,
     role: user.role,
     mustChangePassword: Boolean(user.mustChangePassword),
+    isSubadmin: Boolean(user.isSubadmin),
+    affiliation: user.affiliation || '',
+    permissions: user.isSubadmin ? user.permissions || [] : [],
   } : null;
+}
+
+function subadminAccessDenied(user, pathname, method) {
+  if (!user?.isSubadmin) return false;
+  const permissions = new Set(user.permissions || []);
+  const allowed = (...required) => required.some((permission) => permissions.has(permission));
+  if (pathname === '/api/admin/summary' || pathname === '/api/admin/profile') return false;
+  if (pathname === '/api/admin/maintenance' || pathname.startsWith('/api/admin/admins')
+    || pathname.startsWith('/api/admin/subadmins')) return true;
+  if (pathname.startsWith('/api/admin/organizers/') && pathname.endsWith('/reset-password')) {
+    return !allowed('support', 'organizers');
+  }
+  if (pathname.startsWith('/api/admin/organizers')) return !allowed('organizers');
+  if (pathname.startsWith('/api/admin/support')) return !allowed('support');
+  if (pathname.startsWith('/api/admin/announcements')) return !allowed('announcements');
+  if (pathname.startsWith('/api/admin/venues') || pathname.startsWith('/api/admin/venue-requests')) {
+    return !allowed('venues');
+  }
+  if (pathname.startsWith('/api/admin/races')) return !allowed('races');
+  if (pathname === '/api/support' && method === 'POST') return true;
+  if (/^\/api\/support\/[0-9a-f-]{36}\/messages$/i.test(pathname) && method === 'POST') {
+    return !allowed('support');
+  }
+  return pathname.startsWith('/api/admin/');
 }
 
 function createSession(request, response, user, accounts) {
@@ -633,6 +661,10 @@ const server = http.createServer((request, response) => {
     sendJson(response, 403, { error: '一時パスワードを変更してからご利用ください' });
     return;
   }
+  if (subadminAccessDenied(user, url.pathname, request.method)) {
+    sendJson(response, 403, { error: 'この操作を行う権限がありません' });
+    return;
+  }
 
   if (url.pathname === '/api/auth/me' && request.method === 'GET') {
     sendJson(response, 200, { user });
@@ -709,6 +741,9 @@ const server = http.createServer((request, response) => {
           email,
           role: foundUser.role,
           mustChangePassword: Boolean(foundUser.mustChangePassword),
+          isSubadmin: Boolean(foundUser.isSubadmin),
+          affiliation: foundUser.affiliation || '',
+          permissions: foundUser.isSubadmin ? foundUser.permissions || [] : [],
         },
       });
     }).catch((error) => sendJson(response, 400, { error: error.message }));
@@ -752,7 +787,16 @@ const server = http.createServer((request, response) => {
       }
       saveAccounts(accounts);
       sendJson(response, 200, {
-        user: { id: account.id, name: account.name, email: account.email, role: account.role, mustChangePassword: false },
+        user: {
+          id: account.id,
+          name: account.name,
+          email: account.email,
+          role: account.role,
+          mustChangePassword: false,
+          isSubadmin: Boolean(account.isSubadmin),
+          affiliation: account.affiliation || '',
+          permissions: account.isSubadmin ? account.permissions || [] : [],
+        },
       });
     }).catch((error) => sendJson(response, 400, { error: error.message }));
     return;
@@ -934,6 +978,9 @@ const server = http.createServer((request, response) => {
       return;
     }
     const accounts = readAccounts();
+    const isSubadmin = Boolean(user.isSubadmin);
+    const permissions = isSubadmin ? user.permissions || [] : [];
+    const canAccess = (permission) => !isSubadmin || permissions.includes(permission);
     const organizers = accounts.users.filter((item) => item.role === 'organizer');
     const admins = accounts.users.filter((item) => item.role === 'admin');
     const racesById = readRaces();
@@ -948,44 +995,50 @@ const server = http.createServer((request, response) => {
     }));
     sendJson(response, 200, {
       admin: accountLabel(accounts, user.id),
-      admins: admins.map(({ id, name, email, createdAt }) => ({
+      isSubadmin,
+      permissions,
+      admins: isSubadmin ? [] : admins.map(({ id, name, email, affiliation, isSubadmin: subadmin, createdAt }) => ({
         id,
         name,
         email,
+        affiliation: affiliation || '',
+        isSubadmin: Boolean(subadmin),
         createdAt,
         isPrimary: email === String(process.env.ADMIN_EMAIL || '').trim().toLowerCase(),
       })),
-      organizerCount: organizers.length,
-      raceCount: races.length,
-      organizers: organizers.map(({ id, name, email, createdAt }) => ({
+      organizerCount: canAccess('organizers') ? organizers.length : 0,
+      raceCount: canAccess('races') ? races.length : 0,
+      organizers: canAccess('organizers') ? organizers.map(({ id, name, email, createdAt }) => ({
         id,
         name,
         email,
         createdAt,
         ownedRaceCount: races.filter((race) => race.ownerId === id).length,
         collaborationCount: races.filter((race) => (race.collaborationGroup?.memberIds || []).includes(id)).length,
-      })),
-      races: raceSummaries,
-      auditLog: accounts.auditLog.slice(-100).reverse().map((entry) => ({
+      })) : [],
+      races: canAccess('races') ? raceSummaries : [],
+      auditLog: canAccess('audit') ? accounts.auditLog.slice(-100).reverse().map((entry) => ({
         ...entry,
         actor: accountLabel(accounts, entry.actorId),
-      })),
-      supportTickets: accounts.supportTickets
+      })) : [],
+      supportTickets: canAccess('support') ? accounts.supportTickets
         .map((ticket) => ({ ...ticket, organizer: accountLabel(accounts, ticket.organizerId) }))
-        .sort((left, right) => right.updatedAt - left.updatedAt),
-      announcements: accounts.announcements
+        .sort((left, right) => right.updatedAt - left.updatedAt) : [],
+      announcements: canAccess('announcements') ? accounts.announcements
         .map((item) => ({ ...item, important: Boolean(item.important) }))
-        .sort((left, right) => right.createdAt - left.createdAt),
-      venues: accounts.venues.map(venueDetails),
-      countryCodes: UN_MEMBER_COUNTRY_CODES,
-      venueRequests: accounts.venueRequests
+        .sort((left, right) => right.createdAt - left.createdAt) : [],
+      venues: canAccess('venues') ? accounts.venues.map(venueDetails) : [],
+      countryCodes: canAccess('venues') ? UN_MEMBER_COUNTRY_CODES : [],
+      venueRequests: canAccess('venues') ? accounts.venueRequests
         .map((item) => ({
           ...item,
           organizer: accountLabel(accounts, item.organizerId),
           raceTitle: racesById[item.raceId]?.title || item.raceTitle || '削除済み大会',
         }))
-        .sort((left, right) => right.updatedAt - left.updatedAt),
-      maintenance: maintenanceSettings(accounts),
+        .sort((left, right) => right.updatedAt - left.updatedAt) : [],
+      maintenance: isSubadmin
+        ? { enabled: false, message: defaultMaintenanceMessage }
+        : maintenanceSettings(accounts),
     });
     return;
   }
@@ -1075,6 +1128,50 @@ const server = http.createServer((request, response) => {
     return;
   }
 
+  if (url.pathname === '/api/admin/subadmins' && request.method === 'POST') {
+    if (user?.role !== 'admin') {
+      sendJson(response, user ? 403 : 401, { error: '管理者専用です' });
+      return;
+    }
+    readBody(request).then(async (body) => {
+      const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 80) : '';
+      const affiliation = typeof body?.affiliation === 'string' ? body.affiliation.trim().slice(0, 120) : '';
+      const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+      if (!name || !affiliation || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        sendJson(response, 400, { error: '氏名・所属・正しいメールアドレスを入力してください' });
+        return;
+      }
+      const accounts = readAccounts();
+      if (accounts.users.some((item) => item.email.toLowerCase() === email)) {
+        sendJson(response, 409, { error: 'このメールアドレスは登録済みです' });
+        return;
+      }
+      const id = crypto.randomUUID();
+      const temporaryPassword = crypto.randomBytes(12).toString('hex');
+      const salt = crypto.randomBytes(16).toString('hex');
+      const subadmin = {
+        id,
+        name,
+        affiliation,
+        email,
+        role: 'admin',
+        isSubadmin: true,
+        permissions: subadminPermissions,
+        salt,
+        passwordHash: await passwordHash(temporaryPassword, salt),
+        mustChangePassword: true,
+        createdAt: Date.now(),
+      };
+      accounts.users.push(subadmin);
+      saveAccounts(accounts);
+      sendJson(response, 201, {
+        subadmin: { id, name, affiliation, email, isSubadmin: true, createdAt: subadmin.createdAt },
+        temporaryPassword,
+      });
+    }).catch((error) => sendJson(response, 400, { error: error.message }));
+    return;
+  }
+
   const adminEditMatch = url.pathname.match(/^\/api\/admin\/admins\/([0-9a-f-]{36})$/i);
   if (adminEditMatch && request.method === 'PATCH') {
     if (user?.role !== 'admin') {
@@ -1083,6 +1180,7 @@ const server = http.createServer((request, response) => {
     }
     readBody(request).then((body) => {
       const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 80) : '';
+      const affiliation = typeof body?.affiliation === 'string' ? body.affiliation.trim().slice(0, 120) : '';
       const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
       if (!name || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         sendJson(response, 400, { error: '管理者名と正しいメールアドレスを入力してください' });
@@ -1106,6 +1204,15 @@ const server = http.createServer((request, response) => {
       const emailChanged = email !== admin.email;
       admin.name = name;
       admin.email = email;
+      if (admin.isSubadmin) {
+        if (!affiliation) {
+          sendJson(response, 400, { error: 'サブ管理者の所属を入力してください' });
+          return;
+        }
+        admin.affiliation = affiliation;
+      } else if (typeof body?.affiliation === 'string') {
+        admin.affiliation = affiliation;
+      }
       if (emailChanged) {
         const token = cookieMap(request).sokuho_session;
         const currentSessionId = token && crypto.createHash('sha256').update(token).digest('hex');
@@ -1118,6 +1225,7 @@ const server = http.createServer((request, response) => {
         admin: {
           id: admin.id,
           name: admin.name,
+          affiliation: admin.affiliation || '',
           email: admin.email,
           createdAt: admin.createdAt,
           isPrimary: admin.email === primaryEmail,
