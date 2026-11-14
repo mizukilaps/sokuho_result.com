@@ -29,7 +29,7 @@
       font-synthesis: none;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; padding-bottom: calc(86px + env(safe-area-inset-bottom)); background: var(--canvas); color: var(--ink); }
+    body { margin: 0; padding-bottom: calc(92px + env(safe-area-inset-bottom)); background: var(--canvas); color: var(--ink); }
     button, input, select, textarea { font: inherit; }
     button { cursor: pointer; }
     .masthead { background: var(--forest-dark); color: white; border-bottom: 4px solid var(--lime); }
@@ -182,15 +182,14 @@
     .group-member-name { font-size: 13px; font-weight: 800; }
     .group-role { display: inline-block; margin-left: 6px; color: var(--forest); font-size: 10px; font-weight: 700; }
     .group-panel .error { margin-top: 8px; }
-    .sponsor-bar { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; min-height: 68px; padding-bottom: env(safe-area-inset-bottom); border-top: 1px solid var(--line); background: rgba(255,255,255,.97); box-shadow: 0 -4px 18px rgba(73,55,101,.08); }
-    .sponsor-bar-inner { display: flex; align-items: center; justify-content: center; gap: 24px; width: min(1120px, calc(100% - 36px)); min-height: 68px; margin: auto; }
-    .sponsor-label { color: var(--muted); font-size: 10px; font-weight: 800; }
-    .sponsor-list { display: flex; align-items: center; gap: 26px; }
-    .sponsor-link { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; color: #202020; text-decoration: none; }
-    .sponsor-link img { display: block; object-fit: contain; }
-    .sponsor-newbalance img, .sponsor-github img { width: 26px; height: 26px; }
-    .sponsor-cramer img { width: 108px; height: 27px; }
-    .sponsor-name { font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .sponsor-bar { position: fixed; z-index: 30; right: 0; bottom: 0; left: 0; min-height: 72px; padding: 6px 0 env(safe-area-inset-bottom); border-top: 1px solid #d6c6a2; background: linear-gradient(110deg, var(--forest-dark), #5b4778); box-shadow: 0 -6px 22px rgba(73,55,101,.15); }
+    .sponsor-bar-inner { display: flex; align-items: center; justify-content: center; gap: 22px; width: min(1120px, calc(100% - 36px)); min-height: 58px; margin: auto; }
+    .platinum-partner { display: flex; align-items: center; gap: 14px; flex-shrink: 0; color: white; text-decoration: none; }
+    .platinum-copy { display: grid; gap: 3px; }
+    .platinum-copy strong { color: #e7d8b7; font-size: 9px; letter-spacing: .12em; }
+    .platinum-copy span { color: white; font-size: 10px; font-weight: 700; }
+    .jaaf-logo-frame { display: flex; align-items: center; justify-content: center; min-width: 112px; min-height: 48px; padding: 5px 12px; background: white; box-shadow: 0 2px 8px rgba(20,12,30,.12); }
+    .jaaf-logo { display: block; width: 106px; height: auto; }
     .mobile-only { display: none; }
     @keyframes page-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     #app.page-enter { animation: page-enter 220ms ease-out both; }
@@ -233,15 +232,15 @@
       tbody td .danger, tbody td button { justify-self: start; }
       .lane { width: auto; text-align: left; }
       .footnote { display: block; }.footnote span { display: block; margin-top: 5px; }
-      body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
-      .sponsor-bar, .sponsor-bar-inner { min-height: 64px; }
-      .sponsor-bar-inner { justify-content: space-between; gap: 8px; width: calc(100% - 20px); }
-      .sponsor-label { font-size: 9px; }
-      .sponsor-list { justify-content: space-between; flex: 1; gap: 8px; }
-      .sponsor-link { gap: 4px; min-height: 36px; }
-      .sponsor-newbalance img, .sponsor-github img { width: 21px; height: 21px; }
-      .sponsor-cramer img { width: 74px; height: 20px; }
-      .sponsor-name { font-size: 10px; }
+      body { padding-bottom: calc(92px + env(safe-area-inset-bottom)); }
+      .sponsor-bar { min-height: 72px; }
+      .sponsor-bar-inner { gap: 12px; width: calc(100% - 20px); min-height: 58px; }
+      .platinum-partner { gap: 9px; }
+      .platinum-copy { gap: 1px; }
+      .platinum-copy strong { font-size: 8px; }
+      .platinum-copy span { font-size: 9px; }
+      .jaaf-logo-frame { min-width: 88px; min-height: 34px; padding: 4px 8px; }
+      .jaaf-logo { width: 78px; }
       .mobile-only { display: inline; }
     }
     @media (prefers-reduced-motion: reduce) { #app.page-enter { animation-duration: 1ms; } }
@@ -263,20 +262,12 @@
     </div>
   </header>
   <main id="app" aria-live="polite"></main>
-  <footer class="sponsor-bar" aria-label="スポンサー">
+  <footer class="sponsor-bar" aria-label="パートナー">
     <div class="sponsor-bar-inner">
-      <span class="sponsor-label">協賛</span>
-      <div class="sponsor-list">
-        <a class="sponsor-link sponsor-newbalance" href="https://www.newbalance.com/" target="_blank" rel="noopener noreferrer" aria-label="New Balance">
-          <img src="newbalance.svg" alt=""><span class="sponsor-name">New Balance</span>
-        </a>
-        <a class="sponsor-link sponsor-cramer" href="https://www.cramer.co.jp/" target="_blank" rel="noopener noreferrer" aria-label="Cramer Japan">
-          <img src="cramer-japan.gif" alt="Cramer Japan">
-        </a>
-        <a class="sponsor-link sponsor-github" href="https://github.com/" target="_blank" rel="noopener noreferrer" aria-label="GitHub">
-          <img src="github-mark.png" alt=""><span class="sponsor-name">GitHub</span>
-        </a>
-      </div>
+      <a class="platinum-partner" href="https://www.jaaf.or.jp/" target="_blank" rel="noopener noreferrer" aria-label="プラチナパートナー 日本陸上競技連盟 JAAF">
+        <span class="platinum-copy"><strong>PLATINUM PARTNER</strong><span>プラチナパートナー</span></span>
+        <span class="jaaf-logo-frame"><img class="jaaf-logo" src="jaaf-logo.png" alt="公益財団法人日本陸上競技連盟 JAAF"></span>
+      </a>
     </div>
   </footer>
   <dialog id="event-dialog">
