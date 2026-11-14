@@ -349,6 +349,10 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
     const body = await requestBody(request);
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
+    const expectedRole = body.expectedRole;
+    if (expectedRole !== undefined && !['organizer', 'admin'].includes(expectedRole)) {
+      return reply(400, { error: 'ログイン画面の種別が正しくありません' });
+    }
     const { state } = await loadState(env);
     const foundUser = state.accounts.users.find((item) => item.email === email);
     const salt = foundUser?.salt || '00000000000000000000000000000000';
@@ -356,6 +360,13 @@ async function routeApi(request, env, url, user, tokenHash, initialState) {
     const actualHash = await hashPassword(password, salt, iterations);
     if (!foundUser || !secureEqual(actualHash, foundUser.passwordHash)) {
       return reply(401, { error: 'メールアドレスまたはパスワードが違います' });
+    }
+    if (expectedRole && foundUser.role !== expectedRole) {
+      return reply(403, {
+        error: expectedRole === 'admin'
+          ? '管理者アカウントではありません。運営者ログインをご利用ください'
+          : '運営者アカウントではありません。管理者ログインをご利用ください',
+      });
     }
     const token = randomHex(32);
     const sessionId = await digest(token);

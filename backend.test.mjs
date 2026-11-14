@@ -50,6 +50,61 @@ test('a changed deployment secret resets the existing admin password', async () 
   assert.equal(newPasswordLogin.status, 200);
 });
 
+test('login rejects credentials that do not match the selected account type', async () => {
+  const { default: backend } = await import('./backend.mjs?auth-role-mismatch');
+  let version = 0;
+  let state = { races: {}, accounts: { users: [], sessions: {} } };
+  const DB = {
+    async load() {
+      return { version, state: structuredClone(state) };
+    },
+    async compareAndSwap(expectedVersion, nextState) {
+      if (expectedVersion !== version) return false;
+      state = structuredClone(nextState);
+      version += 1;
+      return true;
+    },
+  };
+  const env = { DB, ADMIN_EMAIL: 'admin@example.com', ADMIN_PASSWORD: 'admin-password-123' };
+  const request = (path, body) => backend.fetch(new Request(`https://example.test${path}`, {
+    method: body ? 'POST' : 'GET',
+    headers: body ? { 'content-type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  }), env);
+
+  await request('/api/auth/me');
+  const registration = await request('/api/auth/register', {
+    name: '運営者',
+    email: 'organizer@example.com',
+    password: 'organizer-password-123',
+  });
+  assert.equal(registration.status, 201);
+  const initialSessionCount = Object.keys(state.accounts.sessions).length;
+
+  const adminFromOrganizerLogin = await request('/api/auth/login', {
+    email: env.ADMIN_EMAIL,
+    password: env.ADMIN_PASSWORD,
+    expectedRole: 'organizer',
+  });
+  assert.equal(adminFromOrganizerLogin.status, 403);
+  assert.match((await adminFromOrganizerLogin.json()).error, /運営者アカウントではありません/);
+
+  const organizerFromAdminLogin = await request('/api/auth/login', {
+    email: 'organizer@example.com',
+    password: 'organizer-password-123',
+    expectedRole: 'admin',
+  });
+  assert.equal(organizerFromAdminLogin.status, 403);
+  assert.match((await organizerFromAdminLogin.json()).error, /管理者アカウントではありません/);
+  assert.equal(Object.keys(state.accounts.sessions).length, initialSessionCount);
+
+  assert.equal((await request('/api/auth/login', {
+    email: env.ADMIN_EMAIL,
+    password: env.ADMIN_PASSWORD,
+    expectedRole: 'unknown',
+  })).status, 400);
+});
+
 test('organizers can request help and change a temporary password, while admins can reply and broadcast', async () => {
   const { default: backend } = await import('./backend.mjs?organizer-support');
   let version = 0;

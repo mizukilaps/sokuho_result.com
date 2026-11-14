@@ -430,14 +430,15 @@
     function renderAuth(mode = 'login', animate = false, message = '') {
       const registering = mode === 'register';
       const adminMode = mode === 'admin';
+      const authHeading = registering ? '運営者アカウント登録' : adminMode ? '管理者ログイン' : '運営者ログイン';
       app.innerHTML = `
         <section class="auth-wrap">
-          <div class="intro"><div><div class="eyebrow">OPEN MEET DESK</div><h1>運営者ページ</h1></div></div>
+          <div class="intro"><div><div class="eyebrow">OPEN MEET DESK</div><h1>${authHeading}</h1></div></div>
           <section class="panel auth-panel">
             <div class="auth-tabs" role="tablist" aria-label="ログイン種別">
               <button type="button" data-auth-mode="login" role="tab" aria-selected="${mode === 'login'}">運営者ログイン</button>
               <button type="button" data-auth-mode="register" role="tab" aria-selected="${registering}">運営者登録</button>
-              <button type="button" data-auth-mode="admin" role="tab" aria-selected="${adminMode}">管理者</button>
+              <button type="button" data-auth-mode="admin" role="tab" aria-selected="${adminMode}">管理者ログイン</button>
             </div>
             <form class="auth-form" id="auth-form" data-mode="${mode}">
               <h2>${registering ? '運営者アカウントを作成' : adminMode ? '管理者ログイン' : '運営者ログイン'}</h2>
@@ -931,14 +932,18 @@
       const mode = event.currentTarget.dataset.mode;
       const payload = { email: form.get('email'), password: form.get('password') };
       if (mode === 'register') payload.name = form.get('name');
+      else payload.expectedRole = mode === 'admin' ? 'admin' : 'organizer';
       try {
         const result = await request(`/api/auth/${mode === 'register' ? 'register' : 'login'}`, {
           method: 'POST',
           body: JSON.stringify(payload),
         });
-        if (mode === 'admin' && result.user.role !== 'admin') {
+        const expectedRole = mode === 'admin' ? 'admin' : 'organizer';
+        if (mode !== 'register' && result.user.role !== expectedRole) {
           await request('/api/auth/logout', { method: 'POST', body: '{}' });
-          renderAuth('admin', false, '管理者アカウントではありません。');
+          renderAuth(mode, false, mode === 'admin'
+            ? 'このアカウントは管理者ではありません。'
+            : '運営者ログインには運営者アカウントをご利用ください。');
           return;
         }
         currentUser = result.user;

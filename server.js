@@ -667,6 +667,11 @@ const server = http.createServer((request, response) => {
     readBody(request).then(async (body) => {
       const email = String(body.email || '').trim().toLowerCase();
       const password = String(body.password || '');
+      const expectedRole = body.expectedRole;
+      if (expectedRole !== undefined && !['organizer', 'admin'].includes(expectedRole)) {
+        sendJson(response, 400, { error: 'ログイン画面の種別が正しくありません' });
+        return;
+      }
       const accounts = readAccounts();
       const foundUser = accounts.users.find((item) => item.email === email);
       if (!foundUser) {
@@ -679,6 +684,14 @@ const server = http.createServer((request, response) => {
       const actual = Buffer.from(actualHash, 'hex');
       if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
         sendJson(response, 401, { error: 'メールアドレスまたはパスワードが違います' });
+        return;
+      }
+      if (expectedRole && foundUser.role !== expectedRole) {
+        sendJson(response, 403, {
+          error: expectedRole === 'admin'
+            ? '管理者アカウントではありません。運営者ログインをご利用ください'
+            : '運営者アカウントではありません。管理者ログインをご利用ください',
+        });
         return;
       }
       createSession(request, response, foundUser, accounts);
